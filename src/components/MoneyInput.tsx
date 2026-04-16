@@ -1,9 +1,8 @@
 "use client";
 
-// A money input with persistent "$" prefix and thousand separators.
-// Stores its value as a number via `onChange(number)`, displays it formatted.
-
 import { useEffect, useState } from "react";
+import { Input } from "@heroui/react";
+import { CurrencyDollar } from "@phosphor-icons/react/dist/ssr";
 
 const format = (n: number) =>
   Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "";
@@ -14,52 +13,48 @@ export default function MoneyInput({
   value,
   onChange,
   onCommit,
-  className = "",
-  placeholder,
+  label,
   ariaLabel,
+  size = "sm",
 }: {
   value: number;
   onChange: (n: number) => void;
   onCommit?: (n: number) => void;
-  className?: string;
-  placeholder?: string;
+  label?: string;
   ariaLabel?: string;
+  size?: "sm" | "md" | "lg";
 }) {
   const [text, setText] = useState(format(value));
 
-  // Re-sync when the external value changes (e.g., reset or URL sync).
   useEffect(() => {
     setText(format(value));
   }, [value]);
 
   return (
-    <div className={`relative ${className}`}>
-      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none select-none">$</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={text}
-        placeholder={placeholder}
-        aria-label={ariaLabel}
-        onChange={(e) => {
-          const raw = e.target.value;
-          setText(raw);
-          onChange(parse(raw));
-        }}
-        onBlur={() => {
-          const n = parse(text);
-          setText(format(n));
-          onCommit?.(n);
-        }}
-        onFocus={(e) => e.target.select()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        className="w-full border rounded pl-6 pr-2 py-2 text-sm bg-white text-right tabular-nums"
-      />
-    </div>
+    <Input
+      size={size}
+      label={label}
+      aria-label={ariaLabel}
+      startContent={<CurrencyDollar className="w-3.5 h-3.5 text-default-400" weight="regular" />}
+      value={text}
+      onValueChange={(v) => {
+        setText(v);
+        onChange(parse(v));
+      }}
+      onBlur={() => {
+        const n = parse(text);
+        setText(format(n));
+        onCommit?.(n);
+      }}
+      onFocus={(e) => (e.target as HTMLInputElement).select()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      classNames={{ input: "text-right tabular-nums" }}
+      inputMode="numeric"
+    />
   );
 }

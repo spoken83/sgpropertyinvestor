@@ -145,7 +145,7 @@ export async function getProjectDetail(id: number): Promise<ProjectDetail | null
     rentalCount: rents.length,
     rentalsPerYear,
     byUnitType,
-    recentTxns: txns.slice(0, 30),
-    recentRentals: rents.slice(0, 30),
+    recentTxns: txns.slice(0, 200),
+    recentRentals: rents.slice(0, 200),
   };
 }

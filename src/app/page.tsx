@@ -2,14 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { computeAffordability } from "@/lib/affordability";
-import Link from "next/link";
 import { PROFILE_COOKIE, DEFAULT_PROFILE } from "@/lib/profileShared";
 import MoneyInput from "@/components/MoneyInput";
+import {
+  Accordion,
+  AccordionItem,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Checkbox,
+  Input,
+} from "@heroui/react";
+import { Buildings, Wallet } from "@phosphor-icons/react/dist/ssr";
+import { useRouter } from "next/navigation";
 
 const fmt = (n: number) =>
   n.toLocaleString("en-SG", { style: "currency", currency: "SGD", maximumFractionDigits: 0 });
 
 export default function Home() {
+  const router = useRouter();
   const [cash, setCash] = useState(DEFAULT_PROFILE.cash);
   const [cpf, setCpf] = useState(DEFAULT_PROFILE.cpf);
   const [age, setAge] = useState(DEFAULT_PROFILE.age);
@@ -17,7 +29,6 @@ export default function Home() {
   const [includeTax, setIncludeTax] = useState(DEFAULT_PROFILE.includeTax);
   const [taxRate, setTaxRate] = useState(DEFAULT_PROFILE.taxRate);
   const [vacancyMonths, setVacancyMonths] = useState(DEFAULT_PROFILE.vacancyMonths);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [hydrated, setHydrated] = useState(false);
 
@@ -51,128 +62,138 @@ export default function Home() {
     [cash, cpf, age, rate]
   );
 
+  const go = () =>
+    router.push(`/properties?max=${Math.round(result.maxPrice)}`);
+
   return (
-    <main className="max-w-3xl mx-auto p-8 space-y-6">
-      <h1 className="text-3xl font-semibold">SG Property Investment Finder</h1>
-      <p className="text-sm text-gray-600">
-        Enter your funds to see the property price range you can afford (private residential, first loan).
-      </p>
+    <main className="max-w-3xl mx-auto p-4 sm:p-6 lg:p-8 space-y-5">
+      <div className="space-y-2">
+        <div className="inline-flex items-center gap-2 text-tiny text-primary-600 uppercase tracking-wider font-semibold">
+          <Buildings className="w-3.5 h-3.5" weight="duotone" />
+          Singapore Residential · Investment Finder
+        </div>
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">Find your next property investment</h1>
+        <p className="text-default-600">
+          Enter your funds to see the property price range you can afford (private residential, first loan).
+        </p>
+      </div>
 
-      <section className="grid grid-cols-2 gap-4">
-        <MoneyField label="Cash" value={cash} onChange={setCash} />
-        <MoneyField label="CPF OA" value={cpf} onChange={setCpf} />
-        <Field label="Age" value={age} onChange={setAge} />
-        <Field label="Loan rate (% p.a.)" value={rate} onChange={setRate} step={0.1} />
-      </section>
-
-      <details
-        className="border rounded-lg bg-white"
-        open={advancedOpen}
-        onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
-      >
-        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg">
-          Advanced assumptions
-          <span className="ml-2 text-xs text-gray-500 font-normal">
-            (tax: {includeTax ? `${taxRate}%` : "off"} · vacancy: {vacancyMonths} mo/yr)
-          </span>
-        </summary>
-        <div className="px-4 pb-4 pt-2 space-y-4 border-t">
-          <label className="flex items-center gap-3 text-sm">
-            <input
-              type="checkbox"
-              checked={includeTax}
-              onChange={(e) => setIncludeTax(e.target.checked)}
-              className="w-4 h-4"
-            />
-            <span>Apply rental income tax in analysis</span>
-          </label>
+      <Card shadow="sm" className="border border-default-200">
+        <CardHeader className="flex gap-2 items-center">
+          <Wallet className="w-5 h-5 text-primary-600" weight="duotone" />
+          <div className="font-semibold">Your funds</div>
+        </CardHeader>
+        <CardBody className="gap-4">
           <div className="grid grid-cols-2 gap-4">
-            <Field
-              label="Effective rental tax rate (%)"
-              value={taxRate}
-              onChange={setTaxRate}
-              step={1}
-              disabled={!includeTax}
+            <MoneyInput value={cash} onChange={setCash} label="Cash" />
+            <MoneyInput value={cpf} onChange={setCpf} label="CPF OA" />
+            <Input
+              size="md"
+              type="number"
+              label="Age"
+              value={String(age)}
+              onValueChange={(v) => setAge(Number(v))}
             />
-            <Field
-              label="Vacancy (months / year)"
-              value={vacancyMonths}
-              onChange={setVacancyMonths}
-              step={0.5}
+            <Input
+              size="md"
+              type="number"
+              label="Loan rate (% p.a.)"
+              step={0.1}
+              value={String(rate)}
+              onValueChange={(v) => setRate(Number(v))}
+              endContent={<span className="text-tiny text-default-400">%</span>}
             />
           </div>
-          <p className="text-xs text-gray-500">
-            These defaults flow into every property&apos;s investment analysis. You can still override them per-property.
-          </p>
-        </div>
-      </details>
 
-      <section className="border rounded-lg p-6 space-y-3 bg-gray-50">
-        <h2 className="text-xl font-semibold">Affordability</h2>
-        <Row label="Loan tenure" value={`${result.tenureYears} years`} />
-        <Row label="Max property price" value={fmt(result.maxPrice)} emphasize />
-        <Row label="Downpayment (25%)" value={fmt(result.downpayment)} />
-        <Row label="  – Cash (5%)" value={fmt(result.cashRequired)} />
-        <Row label="  – CPF (20%)" value={fmt(result.cpfRequired)} />
-        <Row label="Max loan (75%)" value={fmt(result.maxLoan)} />
-        <Row label="Monthly instalment" value={fmt(result.monthlyInstalment)} />
-        {result.notes.map((n, i) => (
-          <p key={i} className="text-xs text-amber-700">{n}</p>
-        ))}
-      </section>
+          <Accordion
+            variant="light"
+            className="px-0"
+            itemClasses={{
+              title: "text-sm font-medium",
+              subtitle: "text-tiny text-default-500",
+            }}
+          >
+            <AccordionItem
+              key="adv"
+              aria-label="Advanced"
+              title="Advanced assumptions"
+              subtitle={`tax: ${includeTax ? `${taxRate}%` : "off"} · vacancy: ${vacancyMonths} mo/yr`}
+            >
+              <div className="space-y-4 pb-2">
+                <Checkbox isSelected={includeTax} onValueChange={setIncludeTax}>
+                  Apply rental income tax in analysis
+                </Checkbox>
+                <div className="grid grid-cols-2 gap-4">
+                  <Input
+                    size="sm"
+                    type="number"
+                    label="Effective rental tax rate"
+                    value={String(taxRate)}
+                    onValueChange={(v) => setTaxRate(Number(v))}
+                    isDisabled={!includeTax}
+                    endContent={<span className="text-tiny text-default-400">%</span>}
+                  />
+                  <Input
+                    size="sm"
+                    type="number"
+                    label="Vacancy"
+                    step={0.5}
+                    value={String(vacancyMonths)}
+                    onValueChange={(v) => setVacancyMonths(Number(v))}
+                    endContent={<span className="text-tiny text-default-400">mo/yr</span>}
+                  />
+                </div>
+                <p className="text-tiny text-default-500">
+                  These defaults flow into every property&apos;s investment analysis. You can still override them per-property.
+                </p>
+              </div>
+            </AccordionItem>
+          </Accordion>
+        </CardBody>
+      </Card>
 
-      <Link
-        href={`/properties?max=${Math.round(result.maxPrice)}&min=${Math.round(result.minPrice)}`}
-        className="inline-block bg-black text-white px-6 py-3 rounded-lg"
-      >
-        Find properties in this range →
-      </Link>
+      <Card shadow="sm" className="border border-default-200">
+        <CardHeader className="font-semibold">Affordability</CardHeader>
+        <CardBody className="gap-2">
+          <Row label="Loan tenure" value={`${result.tenureYears} years`} />
+          <div className="flex justify-between items-baseline pt-1">
+            <span className="text-default-600">Max property price</span>
+            <span className="font-bold text-2xl text-primary-700 tabular-nums">{fmt(result.maxPrice)}</span>
+          </div>
+          <Row label="Downpayment (25%)" value={fmt(result.downpayment)} />
+          <Row label="  – Cash (5%)" value={fmt(result.cashRequired)} />
+          <Row label="  – CPF (20%)" value={fmt(result.cpfRequired)} />
+          <Row label="Max loan (75%)" value={fmt(result.maxLoan)} />
+          <Row label="Monthly instalment" value={fmt(result.monthlyInstalment)} />
+          {result.notes.map((n, i) => (
+            <p key={i} className="text-tiny text-warning-600 mt-1">{n}</p>
+          ))}
+        </CardBody>
+      </Card>
+
+      <div className="pt-2 space-y-2">
+        <Button
+          color="primary"
+          size="lg"
+          fullWidth
+          onPress={go}
+          className="font-semibold text-base h-14"
+        >
+          Find my best ROI matches
+        </Button>
+        <p className="text-tiny text-default-500 text-center">
+          Every private condo ranked by gross yield, Cash ROI, rental activity and more — split per unit type to surface hidden gems.
+        </p>
+      </div>
     </main>
   );
 }
 
-function MoneyField({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
-  return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="text-gray-700">{label}</span>
-      <MoneyInput value={value} onChange={onChange} />
-    </label>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  step = 1,
-  disabled = false,
-}: {
-  label: string;
-  value: number;
-  onChange: (n: number) => void;
-  step?: number;
-  disabled?: boolean;
-}) {
-  return (
-    <label className={`flex flex-col gap-1 text-sm ${disabled ? "opacity-50" : ""}`}>
-      <span className="text-gray-700">{label}</span>
-      <input
-        type="number"
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="border rounded px-3 py-2 disabled:bg-gray-100"
-      />
-    </label>
-  );
-}
-
-function Row({ label, value, emphasize }: { label: string; value: string; emphasize?: boolean }) {
+function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between text-sm">
-      <span className="text-gray-600">{label}</span>
-      <span className={emphasize ? "font-semibold text-lg" : ""}>{value}</span>
+      <span className="text-default-600">{label}</span>
+      <span className="tabular-nums">{value}</span>
     </div>
   );
 }

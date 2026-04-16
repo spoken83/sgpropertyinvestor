@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
@@ -52,6 +53,15 @@ export type RankFilters = {
 // For rentals, extract first number from area_sqft ranges like "800 to 900".
 // Buckets:
 //   Studio < 450 sqft, 1BR 450–699, 2BR 700–999, 3BR 1000–1399, 4BR+ ≥ 1400
+
+// Cached: returns the full unfiltered dataset (one row per project, unit-type).
+// Every filter/sort/page navigation uses this; filtering happens in JS against the cached array.
+// Revalidates hourly — our ingest jobs are slower than that so this is safe.
+export const getAllRanked = unstable_cache(
+  async () => rankProjects({ minPrice: 0, maxPrice: Number.MAX_SAFE_INTEGER, ignorePriceBand: true }),
+  ["ranked-all-v1"],
+  { revalidate: 3600, tags: ["ranked"] }
+);
 
 export async function rankProjects(f: RankFilters): Promise<RankedUnitType[]> {
   const segmentFilter = f.segment ? sql`AND p.market_segment = ${f.segment}` : sql``;

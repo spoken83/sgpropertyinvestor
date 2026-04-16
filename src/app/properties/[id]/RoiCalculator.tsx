@@ -92,7 +92,7 @@ export default function RoiCalculator(p: Props) {
         Uses median price {fmt(p.price)} and median rent {fmt(p.monthlyRent)}. Adjust buyer profile below.
       </p>
 
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
         <MoneyField label="Cash on hand" value={cash} set={(n) => { setCash(n); setCashDown(null); }} />
         <MoneyField label="CPF OA" value={cpf} set={(n) => { setCpf(n); setCashDown(null); }} />
         <Num label="Age" value={age} set={setAge} />
@@ -102,15 +102,16 @@ export default function RoiCalculator(p: Props) {
       </div>
 
       <div className="bg-white border rounded p-4 space-y-2">
-        <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <label className="text-sm font-medium">How much of your cash goes to downpayment?</label>
-          <button
-            type="button"
-            onClick={() => setCashDown(null)}
-            className="text-xs text-blue-600 hover:underline"
-          >
-            Reset to minimum
-          </button>
+          <div className="flex gap-1">
+            <QuickSet label="Min" onPress={() => setCashDown(null)} />
+            <QuickSet
+              label="50%"
+              onPress={() => setCashDown(minCashDown + (maxCashDown - minCashDown) * 0.5)}
+            />
+            <QuickSet label="100%" onPress={() => setCashDown(maxCashDown)} />
+          </div>
         </div>
         <input
           type="range"
@@ -193,6 +194,18 @@ function MoneyField({ label, value, set }: { label: string; value: number; set: 
       <span className="text-gray-600">{label}</span>
       <MoneyInput value={value} onChange={set} />
     </label>
+  );
+}
+
+function QuickSet({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onPress}
+      className="px-2 py-1 text-tiny font-medium text-default-600 hover:text-foreground hover:bg-default-100 rounded-md border border-default-200 transition-colors"
+    >
+      {label}
+    </button>
   );
 }
 

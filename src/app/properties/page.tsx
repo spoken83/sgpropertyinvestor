@@ -1,12 +1,15 @@
 import Link from "next/link";
-import { rankProjects } from "@/lib/ranking";
+import { getAllRanked } from "@/lib/ranking";
 import { getProfile } from "@/lib/profile";
 import { computeRoi } from "@/lib/roi";
 import PropertiesTable, { type Row, type SortKey } from "./PropertiesTable";
+import PropertiesCardList from "./PropertiesCardList";
 import FiltersBar from "./FiltersBar";
 import { NavProvider } from "./NavContext";
 import ResultsOverlay from "./ResultsOverlay";
 import Pagination from "./Pagination";
+import BackButton from "@/components/BackButton";
+import RememberListUrl from "./RememberListUrl";
 
 const fmt = (n: number) =>
   n.toLocaleString("en-SG", { style: "currency", currency: "SGD", maximumFractionDigits: 0 });
@@ -55,27 +58,39 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
   const dir: "asc" | "desc" = sp.dir === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number(sp.page ?? 1));
 
-  const rows = await rankProjects({
-    minPrice: 0,
-    maxPrice,
-    segment,
-    tenure,
-    mrtOp,
-    mrtVal,
-    unitsOp,
-    unitsVal,
-    psfOp,
-    psfVal,
-    ageOp,
-    ageVal,
-    query: query || undefined,
-    unitType,
-    minYieldPct: minYield,
-    ignorePriceBand: !!query,
-  });
+  // Fetch full dataset from Next.js cache (1hr revalidate). Subsequent requests hit memory.
+  const allRows = await getAllRanked();
   const profile = await getProfile();
 
-  const rowsWithRoi: Row[] = rows
+  // Apply all filters in-memory — much faster than re-running SQL per navigation.
+  const matchOp = (op: string | undefined, val: number | undefined, v: number | null) => {
+    if (!op || val == null) return true;
+    if (v == null) return false;
+    if (op === "gte") return v >= val;
+    if (op === "lte") return v <= val;
+    return v === val;
+  };
+  const qLower = query.toLowerCase();
+  const currentYear = new Date().getFullYear();
+  const filtered = allRows.filter((r) => {
+    if (segment && r.marketSegment !== segment) return false;
+    if (tenure === "freehold" && !(/freehold/i.test(r.tenure ?? "") || /999/.test(r.tenure ?? ""))) return false;
+    if (tenure === "leasehold" && !/99 yrs/i.test(r.tenure ?? "")) return false;
+    if (unitType && r.unitType !== unitType) return false;
+    if (!matchOp(mrtOp, mrtVal, r.mrtDistanceM)) return false;
+    if (!matchOp(unitsOp, unitsVal, r.totalUnits)) return false;
+    if (!matchOp(psfOp, psfVal, r.medianPsf)) return false;
+    if (!matchOp(ageOp, ageVal, r.completionYear != null ? currentYear - r.completionYear : null)) return false;
+    if (minYield != null && r.grossYieldPct < minYield) return false;
+    if (query) {
+      if (!r.name.toLowerCase().includes(qLower)) return false;
+    } else {
+      if (r.medianPrice > maxPrice) return false;
+    }
+    return true;
+  });
+
+  const rowsWithRoi: Row[] = filtered
     .map((r) => {
       const roi = computeRoi({
         price: r.medianPrice,
@@ -138,10 +153,12 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
 
   return (
     <NavProvider>
-      <main className="max-w-7xl mx-auto p-8 space-y-6">
-        <Link href="/" className="text-sm text-blue-600">← Back</Link>
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">
+      <RememberListUrl />
+      <main className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 space-y-5">
+        <div className="flex items-start gap-3">
+          <BackButton fallback="/" />
+          <div className="space-y-1 flex-1 min-w-0">
+          <h1 className="text-xl sm:text-2xl font-semibold">
             {query ? (
               <>Search: <span className="text-blue-700">&ldquo;{query}&rdquo;</span></>
             ) : (
@@ -158,6 +175,7 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
             Cash ROI uses your saved profile: cash {fmt(profile.cash)}, CPF {fmt(profile.cpf)}, age {profile.age}, rate {profile.rate}%.
             <Link href="/" className="ml-2 text-blue-600 hover:underline">Edit</Link>
           </p>
+          </div>
         </div>
 
         <FiltersBar
@@ -187,7 +205,14 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
             </p>
           ) : (
             <div className="space-y-4">
-              <PropertiesTable rows={pageRows} sortKey={sortKey} dir={dir} sortUrls={sortUrls} />
+              {/* Table: shown on wide screens OR when device is in landscape. */}
+              <div className="hidden landscape:block md:block">
+                <PropertiesTable rows={pageRows} sortKey={sortKey} dir={dir} sortUrls={sortUrls} />
+              </div>
+              {/* Cards: shown only on narrow + portrait (mobile phone held upright). */}
+              <div className="landscape:hidden md:hidden">
+                <PropertiesCardList rows={pageRows} />
+              </div>
               {totalPages > 1 && (
                 <Pagination currentPage={currentPage} totalPages={totalPages} prevUrl={prevUrl} nextUrl={nextUrl} />
               )}
