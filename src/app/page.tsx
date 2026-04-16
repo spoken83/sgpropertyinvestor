@@ -1,65 +1,178 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { computeAffordability } from "@/lib/affordability";
+import Link from "next/link";
+import { PROFILE_COOKIE, DEFAULT_PROFILE } from "@/lib/profileShared";
+import MoneyInput from "@/components/MoneyInput";
+
+const fmt = (n: number) =>
+  n.toLocaleString("en-SG", { style: "currency", currency: "SGD", maximumFractionDigits: 0 });
 
 export default function Home() {
+  const [cash, setCash] = useState(DEFAULT_PROFILE.cash);
+  const [cpf, setCpf] = useState(DEFAULT_PROFILE.cpf);
+  const [age, setAge] = useState(DEFAULT_PROFILE.age);
+  const [rate, setRate] = useState(DEFAULT_PROFILE.rate);
+  const [includeTax, setIncludeTax] = useState(DEFAULT_PROFILE.includeTax);
+  const [taxRate, setTaxRate] = useState(DEFAULT_PROFILE.taxRate);
+  const [vacancyMonths, setVacancyMonths] = useState(DEFAULT_PROFILE.vacancyMonths);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    const m = document.cookie.match(new RegExp(`${PROFILE_COOKIE}=([^;]+)`));
+    if (m) {
+      try {
+        const p = JSON.parse(decodeURIComponent(m[1]));
+        if (typeof p.cash === "number") setCash(p.cash);
+        if (typeof p.cpf === "number") setCpf(p.cpf);
+        if (typeof p.age === "number") setAge(p.age);
+        if (typeof p.rate === "number") setRate(p.rate);
+        if (typeof p.includeTax === "boolean") setIncludeTax(p.includeTax);
+        if (typeof p.taxRate === "number") setTaxRate(p.taxRate);
+        if (typeof p.vacancyMonths === "number") setVacancyMonths(p.vacancyMonths);
+      } catch {}
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const payload = encodeURIComponent(
+      JSON.stringify({ cash, cpf, age, rate, includeTax, taxRate, vacancyMonths })
+    );
+    document.cookie = `${PROFILE_COOKIE}=${payload}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
+  }, [hydrated, cash, cpf, age, rate, includeTax, taxRate, vacancyMonths]);
+
+  const result = useMemo(
+    () => computeAffordability({ cash, cpf, age, annualRatePct: rate }),
+    [cash, cpf, age, rate]
+  );
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="max-w-3xl mx-auto p-8 space-y-6">
+      <h1 className="text-3xl font-semibold">SG Property Investment Finder</h1>
+      <p className="text-sm text-gray-600">
+        Enter your funds to see the property price range you can afford (private residential, first loan).
+      </p>
+
+      <section className="grid grid-cols-2 gap-4">
+        <MoneyField label="Cash" value={cash} onChange={setCash} />
+        <MoneyField label="CPF OA" value={cpf} onChange={setCpf} />
+        <Field label="Age" value={age} onChange={setAge} />
+        <Field label="Loan rate (% p.a.)" value={rate} onChange={setRate} step={0.1} />
+      </section>
+
+      <details
+        className="border rounded-lg bg-white"
+        open={advancedOpen}
+        onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg">
+          Advanced assumptions
+          <span className="ml-2 text-xs text-gray-500 font-normal">
+            (tax: {includeTax ? `${taxRate}%` : "off"} · vacancy: {vacancyMonths} mo/yr)
+          </span>
+        </summary>
+        <div className="px-4 pb-4 pt-2 space-y-4 border-t">
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={includeTax}
+              onChange={(e) => setIncludeTax(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span>Apply rental income tax in analysis</span>
+          </label>
+          <div className="grid grid-cols-2 gap-4">
+            <Field
+              label="Effective rental tax rate (%)"
+              value={taxRate}
+              onChange={setTaxRate}
+              step={1}
+              disabled={!includeTax}
+            />
+            <Field
+              label="Vacancy (months / year)"
+              value={vacancyMonths}
+              onChange={setVacancyMonths}
+              step={0.5}
+            />
+          </div>
+          <p className="text-xs text-gray-500">
+            These defaults flow into every property&apos;s investment analysis. You can still override them per-property.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </details>
+
+      <section className="border rounded-lg p-6 space-y-3 bg-gray-50">
+        <h2 className="text-xl font-semibold">Affordability</h2>
+        <Row label="Loan tenure" value={`${result.tenureYears} years`} />
+        <Row label="Max property price" value={fmt(result.maxPrice)} emphasize />
+        <Row label="Downpayment (25%)" value={fmt(result.downpayment)} />
+        <Row label="  – Cash (5%)" value={fmt(result.cashRequired)} />
+        <Row label="  – CPF (20%)" value={fmt(result.cpfRequired)} />
+        <Row label="Max loan (75%)" value={fmt(result.maxLoan)} />
+        <Row label="Monthly instalment" value={fmt(result.monthlyInstalment)} />
+        {result.notes.map((n, i) => (
+          <p key={i} className="text-xs text-amber-700">{n}</p>
+        ))}
+      </section>
+
+      <Link
+        href={`/properties?max=${Math.round(result.maxPrice)}&min=${Math.round(result.minPrice)}`}
+        className="inline-block bg-black text-white px-6 py-3 rounded-lg"
+      >
+        Find properties in this range →
+      </Link>
+    </main>
+  );
+}
+
+function MoneyField({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-gray-700">{label}</span>
+      <MoneyInput value={value} onChange={onChange} />
+    </label>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  step = 1,
+  disabled = false,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  step?: number;
+  disabled?: boolean;
+}) {
+  return (
+    <label className={`flex flex-col gap-1 text-sm ${disabled ? "opacity-50" : ""}`}>
+      <span className="text-gray-700">{label}</span>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="border rounded px-3 py-2 disabled:bg-gray-100"
+      />
+    </label>
+  );
+}
+
+function Row({ label, value, emphasize }: { label: string; value: string; emphasize?: boolean }) {
+  return (
+    <div className="flex justify-between text-sm">
+      <span className="text-gray-600">{label}</span>
+      <span className={emphasize ? "font-semibold text-lg" : ""}>{value}</span>
     </div>
   );
 }
