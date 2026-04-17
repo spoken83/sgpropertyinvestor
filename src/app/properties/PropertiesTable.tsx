@@ -36,6 +36,9 @@ export type Row = {
   turnoverPct: number | null;
   totalUnits: number | null;
   completionYear: number | null;
+  caScore: number | null;
+  momentumPctYr: number | null;
+  peerSpreadPct: number | null;
   inBudget: boolean;
 };
 
@@ -45,7 +48,15 @@ export type SortKey =
   | "medianRent"
   | "grossYieldPct"
   | "cashOnCashPct"
-  | "turnoverPct";
+  | "turnoverPct"
+  | "caScore";
+
+function caColor(score: number | null): string {
+  if (score == null) return "text-default-400";
+  if (score >= 65) return "text-success-700";
+  if (score >= 40) return "text-warning-700";
+  return "text-danger-600";
+}
 
 const segmentColor = (s: string | null): "primary" | "secondary" | "default" => {
   if (s === "CCR") return "primary";
@@ -70,19 +81,20 @@ export default function PropertiesTable({
         <table className="w-full text-sm table-fixed">
           <colgroup>
             {/* Project-side */}
-            <col className="w-[20%]" />
-            <col className="w-[8%]" />
+            <col className="w-[19%]" />
+            <col className="w-[7%]" />
             <col className="w-[6%]" />
             <col className="w-[6%]" />
-            <col className="w-[10%]" />
+            <col className="w-[9%]" />
             {/* Unit-side */}
             <col className="w-[6%]" />
-            <col className="w-[10%]" />
+            <col className="w-[9%]" />
             <col className="w-[6%]" />
-            <col className="w-[8%]" />
             <col className="w-[7%]" />
             <col className="w-[7%]" />
+            <col className="w-[7%]" />
             <col className="w-[6%]" />
+            <col className="w-[5%]" />
           </colgroup>
           <thead>
             <tr className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:border-b [&_th]:border-default-200 text-tiny uppercase tracking-wider text-default-500 font-medium">
@@ -97,6 +109,7 @@ export default function PropertiesTable({
               <SortHeader k="medianRent" label="Rent" active={sortKey} dir={dir} sortUrls={sortUrls} />
               <SortHeader k="grossYieldPct" label="Gross yield" active={sortKey} dir={dir} sortUrls={sortUrls} tip="Annual rent ÷ price" />
               <SortHeader k="cashOnCashPct" label="Cash ROI" active={sortKey} dir={dir} sortUrls={sortUrls} tip="Annual cash flow ÷ cash put down. Uses your saved profile." />
+              <SortHeader k="caScore" label="CA Score" active={sortKey} dir={dir} sortUrls={sortUrls} tip="Composite 0–100 capital-appreciation score: momentum + peer-discount + volume − volatility, percentile-ranked within unit type." />
               <SortHeader k="turnoverPct" label="Activity" active={sortKey} dir={dir} sortUrls={sortUrls} tip="Project rentals/yr ÷ total units. Higher = stronger demand. Shown as ~N/yr when units unknown." />
             </tr>
           </thead>
@@ -156,6 +169,16 @@ export default function PropertiesTable({
                 <td className="px-2 py-3 text-right tabular-nums font-semibold">{r.grossYieldPct.toFixed(2)}%</td>
                 <td className={`px-2 py-3 text-right tabular-nums font-semibold ${r.cashOnCashPct >= 0 ? "text-success-700" : "text-danger-600"}`}>
                   {r.cashOnCashPct >= 0 ? "+" : ""}{r.cashOnCashPct.toFixed(1)}%
+                </td>
+                <td
+                  className={`px-2 py-3 text-right tabular-nums font-semibold ${caColor(r.caScore)}`}
+                  title={
+                    r.caScore != null
+                      ? `Momentum ${r.momentumPctYr != null ? (r.momentumPctYr >= 0 ? "+" : "") + r.momentumPctYr.toFixed(1) + "%/yr" : "—"} · vs peers ${r.peerSpreadPct != null ? (r.peerSpreadPct >= 0 ? "+" : "") + r.peerSpreadPct.toFixed(1) + "%" : "—"}`
+                      : "Not enough transactions to score"
+                  }
+                >
+                  {r.caScore != null ? r.caScore.toFixed(0) : <span className="text-default-300">—</span>}
                 </td>
                 <td
                   className="px-2 py-3 text-right tabular-nums text-tiny text-default-600"

@@ -29,6 +29,12 @@ export default function Home() {
   const [includeTax, setIncludeTax] = useState(DEFAULT_PROFILE.includeTax);
   const [taxRate, setTaxRate] = useState(DEFAULT_PROFILE.taxRate);
   const [vacancyMonths, setVacancyMonths] = useState(DEFAULT_PROFILE.vacancyMonths);
+  const [includeTdsr, setIncludeTdsr] = useState(DEFAULT_PROFILE.includeTdsr);
+  const [salary, setSalary] = useState(DEFAULT_PROFILE.salary);
+  const [monthlyDebts, setMonthlyDebts] = useState(DEFAULT_PROFILE.monthlyDebts);
+  const [tdsrPct, setTdsrPct] = useState(DEFAULT_PROFILE.tdsrPct);
+  const [stressRate, setStressRate] = useState(DEFAULT_PROFILE.stressRate);
+  const [extraCashDown, setExtraCashDown] = useState(0);
 
   const [hydrated, setHydrated] = useState(false);
 
@@ -44,6 +50,11 @@ export default function Home() {
         if (typeof p.includeTax === "boolean") setIncludeTax(p.includeTax);
         if (typeof p.taxRate === "number") setTaxRate(p.taxRate);
         if (typeof p.vacancyMonths === "number") setVacancyMonths(p.vacancyMonths);
+        if (typeof p.includeTdsr === "boolean") setIncludeTdsr(p.includeTdsr);
+        if (typeof p.salary === "number") setSalary(p.salary);
+        if (typeof p.monthlyDebts === "number") setMonthlyDebts(p.monthlyDebts);
+        if (typeof p.tdsrPct === "number") setTdsrPct(p.tdsrPct);
+        if (typeof p.stressRate === "number") setStressRate(p.stressRate);
       } catch {}
     }
     setHydrated(true);
@@ -52,14 +63,47 @@ export default function Home() {
   useEffect(() => {
     if (!hydrated) return;
     const payload = encodeURIComponent(
-      JSON.stringify({ cash, cpf, age, rate, includeTax, taxRate, vacancyMonths })
+      JSON.stringify({ cash, cpf, age, rate, includeTax, taxRate, vacancyMonths, includeTdsr, salary, monthlyDebts, tdsrPct, stressRate })
     );
     document.cookie = `${PROFILE_COOKIE}=${payload}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
-  }, [hydrated, cash, cpf, age, rate, includeTax, taxRate, vacancyMonths]);
+  }, [hydrated, cash, cpf, age, rate, includeTax, taxRate, vacancyMonths, includeTdsr, salary, monthlyDebts, tdsrPct, stressRate]);
+
+  // Max useful extra cash: the point where deploying more cash starts reducing
+  // the max price (because the 5% cash floor eats into remaining cash faster
+  // than the loan shrinks). Solve analytically per binding constraint.
+  //
+  // When TDSR binding: maxExtra = (19*cash − maxLoanTdsr − cpf) / 20
+  //   derived from: cashFloor + extra = cash AND price = (tdsr + extra + cpf) / 0.95
+  // When LTV binding:  maxExtra = (4*cash − cpf) / 5
+  //   derived from: cashFloor + extra = cash AND price = (extra + cpf) / 0.20
+  const tdsrCeilingCalc = includeTdsr ? salary * (tdsrPct / 100) : 0;
+  const tdsrAvailCalc = Math.max(0, tdsrCeilingCalc - monthlyDebts);
+  const stressM = stressRate / 100 / 12;
+  const tenureCalc = Math.max(0, Math.min(30, 65 - age));
+  const nCalc = tenureCalc * 12;
+  const maxLoanTdsrCalc = nCalc > 0 && stressM > 0
+    ? tdsrAvailCalc * (1 - Math.pow(1 + stressM, -nCalc)) / stressM
+    : tdsrAvailCalc * nCalc;
+  // When TDSR is active and binding, the optimal max extra cash is where
+  // cashFloor meets the TDSR constraint. When TDSR is off (or not binding),
+  // it's where cashFloor meets the LTV constraint.
+  const optimalExtraTdsr = Math.max(0, (19 * cash - maxLoanTdsrCalc - cpf) / 20);
+  const optimalExtraLtv = Math.max(0, (4 * cash - cpf) / 5);
+  // Use TDSR formula when TDSR is active and tighter than LTV at zero extra cash.
+  const tdsrTighter = includeTdsr && (maxLoanTdsrCalc + cpf) / 0.95 < cpf / 0.20;
+  const maxExtraCash = Math.max(0, Math.min(
+    tdsrTighter ? optimalExtraTdsr : optimalExtraLtv,
+    cash * 0.95
+  ));
+  const effectiveExtra = Math.min(extraCashDown, maxExtraCash);
 
   const result = useMemo(
-    () => computeAffordability({ cash, cpf, age, annualRatePct: rate }),
-    [cash, cpf, age, rate]
+    () => computeAffordability({
+      cash, cpf, age, annualRatePct: rate,
+      extraCashDown: effectiveExtra,
+      includeTdsr, salary, monthlyDebts, tdsrPct, stressRate,
+    }),
+    [cash, cpf, age, rate, effectiveExtra, includeTdsr, salary, monthlyDebts, tdsrPct, stressRate]
   );
 
   const go = () =>
@@ -103,6 +147,37 @@ export default function Home() {
               onValueChange={(v) => setRate(Number(v))}
               endContent={<span className="text-tiny text-default-400">%</span>}
             />
+          </div>
+
+          <div className="space-y-3 pt-2 border-t border-default-100">
+            <Checkbox isSelected={includeTdsr} onValueChange={setIncludeTdsr}>
+              <span className="text-sm font-medium">Include TDSR constraint</span>
+              <span className="text-tiny text-default-500 ml-1">(income-based loan cap)</span>
+            </Checkbox>
+            {includeTdsr && (
+              <div className="grid grid-cols-2 gap-4">
+                <MoneyInput value={salary} onChange={setSalary} label="Monthly gross salary" />
+                <MoneyInput value={monthlyDebts} onChange={setMonthlyDebts} label="Existing monthly debts" />
+                <Input
+                  size="md"
+                  type="number"
+                  label="TDSR ceiling"
+                  step={1}
+                  value={String(tdsrPct)}
+                  onValueChange={(v) => setTdsrPct(Number(v))}
+                  endContent={<span className="text-tiny text-default-400">%</span>}
+                />
+                <Input
+                  size="md"
+                  type="number"
+                  label="Bank stress-test rate"
+                  step={0.1}
+                  value={String(stressRate)}
+                  onValueChange={(v) => setStressRate(Number(v))}
+                  endContent={<span className="text-tiny text-default-400">% p.a.</span>}
+                />
+              </div>
+            )}
           </div>
 
           <Accordion
@@ -160,11 +235,67 @@ export default function Home() {
             <span className="text-default-600">Max property price</span>
             <span className="font-bold text-2xl text-primary-700 tabular-nums">{fmt(result.maxPrice)}</span>
           </div>
-          <Row label="Downpayment (25%)" value={fmt(result.downpayment)} />
-          <Row label="  – Cash (5%)" value={fmt(result.cashRequired)} />
-          <Row label="  – CPF (20%)" value={fmt(result.cpfRequired)} />
-          <Row label="Max loan (75%)" value={fmt(result.maxLoan)} />
+          {result.tdsrBinding && (
+            <div className="flex justify-between text-sm">
+              <span className="text-default-400">Max price (LTV only, without TDSR)</span>
+              <span className="tabular-nums text-default-400 line-through">{fmt(result.maxPriceLtvOnly)}</span>
+            </div>
+          )}
+
+          {/* Cash deployment slider */}
+          <div className="bg-default-50 border border-default-200 rounded-lg p-4 space-y-2 mt-1">
+            <div className="flex items-baseline justify-between gap-3">
+              <label className="text-sm font-medium">Cash to deploy as downpayment</label>
+              <div className="flex gap-1">
+                <button type="button" onClick={() => setExtraCashDown(0)}
+                  className="px-2 py-1 text-tiny font-medium text-default-600 hover:text-foreground hover:bg-default-100 rounded-md border border-default-200 transition-colors">
+                  Min
+                </button>
+                <button type="button" onClick={() => setExtraCashDown(Math.round(maxExtraCash / 2))}
+                  className="px-2 py-1 text-tiny font-medium text-default-600 hover:text-foreground hover:bg-default-100 rounded-md border border-default-200 transition-colors">
+                  50%
+                </button>
+                <button type="button" onClick={() => setExtraCashDown(maxExtraCash)}
+                  className="px-2 py-1 text-tiny font-medium text-default-600 hover:text-foreground hover:bg-default-100 rounded-md border border-default-200 transition-colors">
+                  Max
+                </button>
+              </div>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={maxExtraCash}
+              step={1000}
+              value={effectiveExtra}
+              onChange={(e) => setExtraCashDown(Number(e.target.value))}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-default-500">
+              <span>Min {fmt(result.maxPrice * 0.05)} (5% only)</span>
+              <span>All {fmt(cash)}</span>
+            </div>
+            <div className="flex justify-between text-sm pt-1 border-t border-default-100">
+              <span className="text-default-600">Cash used</span>
+              <span className="font-semibold tabular-nums">{fmt(result.cashRequired)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-default-600">Cash kept liquid</span>
+              <span className="font-semibold text-green-700 tabular-nums">{fmt(result.cashKeptLiquid)}</span>
+            </div>
+          </div>
+
+          <Row label="Downpayment (cash + CPF)" value={fmt(result.downpayment)} />
+          <Row label="  – CPF deployed" value={fmt(result.cpfRequired)} />
+          <Row label="Loan needed" value={fmt(result.maxLoan)} />
           <Row label="Monthly instalment" value={fmt(result.monthlyInstalment)} />
+          {result.tdsrActive && (
+            <>
+              <div className="border-t border-default-100 pt-2 mt-1" />
+              <Row label={`TDSR ceiling (${result.stressRateUsed}% stress)`} value={fmt(result.tdsrCeiling)} />
+              <Row label="Available for mortgage" value={fmt(result.tdsrAvailable)} />
+              <Row label="Max loan (TDSR allows)" value={fmt(result.maxLoanTdsr)} />
+            </>
+          )}
           {result.notes.map((n, i) => (
             <p key={i} className="text-tiny text-warning-600 mt-1">{n}</p>
           ))}

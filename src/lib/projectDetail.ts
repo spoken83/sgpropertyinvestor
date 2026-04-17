@@ -2,6 +2,26 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { unitTypeFromSqft, sqmToSqft, parseSqftRange, UnitType } from "./units";
 
+export type CaMetrics = {
+  unitType: UnitType | "Overall";
+  momentumPctYr: number | null;
+  peerSpreadPct: number | null;
+  volumeTxnsYr: number | null;
+  volatilityPct: number | null;
+  caScore: number | null;
+  currentPsf: number | null;
+  forecastLowPsf: number | null;
+  forecastMidPsf: number | null;
+  forecastHighPsf: number | null;
+  trendSeries: Array<{ q: string; psf: number; n: number }>;
+  peerSeries: Array<{ q: string; psf: number; nPeers: number }>;
+  peerCount: number | null;
+  peerRadiusM: number | null;
+  sampleSize: number | null;
+  leaseYearsRemaining: number | null;
+  leaseDecayPctYr: number | null;
+};
+
 export type ProjectDetail = {
   id: number;
   name: string;
@@ -36,6 +56,9 @@ export type ProjectDetail = {
   }>;
   recentTxns: Array<{ contractDate: string; price: number; sqft: number; psf: number; floorRange: string | null; propertyType: string | null }>;
   recentRentals: Array<{ leaseDate: string; rent: number; sqft: number | null; bedrooms: number | null }>;
+  // Capital-appreciation metrics, one row per unit-type + "Overall".
+  // Populated by `src/scripts/computeCapitalAppreciation.ts`; empty if not yet run.
+  caByUnitType: CaMetrics[];
 };
 
 export async function getProjectDetail(id: number): Promise<ProjectDetail | null> {
@@ -103,6 +126,38 @@ export async function getProjectDetail(id: number): Promise<ProjectDetail | null
     rentalsPerYear = rents.length;
   }
 
+  // Capital-appreciation metrics, per unit-type + Overall.
+  const caRows = await db.execute(sql`
+    SELECT unit_type, momentum_pct_yr, peer_spread_pct, volume_txns_yr, volatility_pct,
+           ca_score, current_psf, forecast_low_psf, forecast_mid_psf, forecast_high_psf,
+           trend_series, peer_series, peer_count, peer_radius_m, sample_size,
+           lease_years_remaining, lease_decay_pct_yr
+    FROM project_metrics
+    WHERE project_id = ${id}
+  `);
+  const caByUnitType: CaMetrics[] = (
+    (caRows as { rows?: Record<string, unknown>[] }).rows ??
+    (caRows as unknown as Record<string, unknown>[])
+  ).map((r) => ({
+    unitType: r.unit_type as CaMetrics["unitType"],
+    momentumPctYr: r.momentum_pct_yr != null ? Number(r.momentum_pct_yr) : null,
+    peerSpreadPct: r.peer_spread_pct != null ? Number(r.peer_spread_pct) : null,
+    volumeTxnsYr: r.volume_txns_yr != null ? Number(r.volume_txns_yr) : null,
+    volatilityPct: r.volatility_pct != null ? Number(r.volatility_pct) : null,
+    caScore: r.ca_score != null ? Number(r.ca_score) : null,
+    currentPsf: r.current_psf != null ? Number(r.current_psf) : null,
+    forecastLowPsf: r.forecast_low_psf != null ? Number(r.forecast_low_psf) : null,
+    forecastMidPsf: r.forecast_mid_psf != null ? Number(r.forecast_mid_psf) : null,
+    forecastHighPsf: r.forecast_high_psf != null ? Number(r.forecast_high_psf) : null,
+    trendSeries: Array.isArray(r.trend_series) ? (r.trend_series as CaMetrics["trendSeries"]) : [],
+    peerSeries: Array.isArray(r.peer_series) ? (r.peer_series as CaMetrics["peerSeries"]) : [],
+    peerCount: r.peer_count != null ? Number(r.peer_count) : null,
+    peerRadiusM: r.peer_radius_m != null ? Number(r.peer_radius_m) : null,
+    sampleSize: r.sample_size != null ? Number(r.sample_size) : null,
+    leaseYearsRemaining: r.lease_years_remaining != null ? Number(r.lease_years_remaining) : null,
+    leaseDecayPctYr: r.lease_decay_pct_yr != null ? Number(r.lease_decay_pct_yr) : null,
+  }));
+
   // By unit type
   const types: UnitType[] = ["Studio", "1BR", "2BR", "3BR", "4BR+"];
   const byUnitType = types.map((ut) => {
@@ -147,5 +202,6 @@ export async function getProjectDetail(id: number): Promise<ProjectDetail | null
     byUnitType,
     recentTxns: txns.slice(0, 200),
     recentRentals: rents.slice(0, 200),
+    caByUnitType,
   };
 }

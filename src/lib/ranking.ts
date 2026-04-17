@@ -25,6 +25,9 @@ export type RankedUnitType = {
   rentalsPerYear: number;
   projectRentalsPerYear: number;     // project-wide total (all unit types)
   turnoverPct: number | null;         // rentals/yr ÷ total_units × 100; null when no unit count
+  caScore: number | null;             // composite capital-appreciation score 0–100
+  momentumPctYr: number | null;       // PSF trend slope, annualised
+  peerSpreadPct: number | null;       // vs 1km distance-weighted peer median
 };
 
 export type Op = "gte" | "lte" | "eq";
@@ -47,6 +50,7 @@ export type RankFilters = {
   query?: string;
   ignorePriceBand?: boolean;
   minYieldPct?: number;
+  minCaScore?: number;
 };
 
 // SQL bucket classifier. For transactions uses area_sqm * 10.7639.
@@ -57,9 +61,10 @@ export type RankFilters = {
 // Cached: returns the full unfiltered dataset (one row per project, unit-type).
 // Every filter/sort/page navigation uses this; filtering happens in JS against the cached array.
 // Revalidates hourly — our ingest jobs are slower than that so this is safe.
+// Bumping the cache key when new columns are added to RankedUnitType (e.g. caScore).
 export const getAllRanked = unstable_cache(
   async () => rankProjects({ minPrice: 0, maxPrice: Number.MAX_SAFE_INTEGER, ignorePriceBand: true }),
-  ["ranked-all-v1"],
+  ["ranked-all-v2-ca"],
   { revalidate: 3600, tags: ["ranked"] }
 );
 
@@ -115,6 +120,9 @@ export async function rankProjects(f: RankFilters): Promise<RankedUnitType[]> {
     : sql``;
   const minYieldFilter = f.minYieldPct
     ? sql`AND (r.median_rent * 12.0 / NULLIF(t.median_price, 0)) * 100 >= ${f.minYieldPct}`
+    : sql``;
+  const minCaFilter = f.minCaScore
+    ? sql`AND pm.ca_score >= ${f.minCaScore}`
     : sql``;
 
   const rows = await db.execute(sql`
@@ -194,11 +202,13 @@ export async function rankProjects(f: RankFilters): Promise<RankedUnitType[]> {
            pr.project_rentals_per_year,
            CASE WHEN p.total_units IS NOT NULL AND p.total_units > 0
              THEN (pr.project_rentals_per_year / p.total_units) * 100
-             ELSE NULL END AS turnover_pct
+             ELSE NULL END AS turnover_pct,
+           pm.ca_score, pm.momentum_pct_yr, pm.peer_spread_pct
     FROM projects p
     JOIN recent_tx t ON t.project_id = p.id
     JOIN recent_rent r ON r.project_id = p.id AND r.unit_type = t.unit_type
     JOIN project_rent pr ON pr.project_id = p.id
+    LEFT JOIN project_metrics pm ON pm.project_id = p.id AND pm.unit_type = t.unit_type
     WHERE t.txn_count >= ${minTxn}
       AND r.rental_count >= 3
       ${priceFilter}
@@ -211,6 +221,7 @@ export async function rankProjects(f: RankFilters): Promise<RankedUnitType[]> {
       ${queryFilter}
       ${typeFilter}
       ${minYieldFilter}
+      ${minCaFilter}
   `);
 
   const data =
@@ -237,5 +248,8 @@ export async function rankProjects(f: RankFilters): Promise<RankedUnitType[]> {
     completionYear: r.completion_year != null ? Number(r.completion_year) : null,
     projectRentalsPerYear: Number(r.project_rentals_per_year),
     turnoverPct: r.turnover_pct != null ? Number(r.turnover_pct) : null,
+    caScore: r.ca_score != null ? Number(r.ca_score) : null,
+    momentumPctYr: r.momentum_pct_yr != null ? Number(r.momentum_pct_yr) : null,
+    peerSpreadPct: r.peer_spread_pct != null ? Number(r.peer_spread_pct) : null,
   }));
 }

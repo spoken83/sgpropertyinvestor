@@ -15,7 +15,17 @@ type Props = {
   segment: "CCR" | "RCR" | "OCR" | null;
   tenure: string | null;
   propertyType?: string | null;
+  initialIncludeTdsr?: boolean;
+  initialSalary?: number;
+  initialMonthlyDebts?: number;
+  initialTdsrPct?: number;
+  initialStressRate?: number;
 };
+
+function pmtCalc(principal: number, monthlyRate: number, n: number) {
+  if (monthlyRate === 0) return principal / n;
+  return (principal * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -n));
+}
 
 export default function RoiCalculator(p: Props) {
   const [cash, setCash] = useState(DEFAULT_PROFILE.cash);
@@ -26,6 +36,11 @@ export default function RoiCalculator(p: Props) {
   const [vacancy, setVacancy] = useState(DEFAULT_PROFILE.vacancyMonths);
   const [includeTax, setIncludeTax] = useState(DEFAULT_PROFILE.includeTax);
   const [incomeTax, setIncomeTax] = useState(DEFAULT_PROFILE.taxRate);
+  const [includeTdsr, setIncludeTdsr] = useState(p.initialIncludeTdsr ?? DEFAULT_PROFILE.includeTdsr);
+  const [salary, setSalary] = useState(p.initialSalary ?? DEFAULT_PROFILE.salary);
+  const [monthlyDebts, setMonthlyDebts] = useState(p.initialMonthlyDebts ?? DEFAULT_PROFILE.monthlyDebts);
+  const [tdsrPct, setTdsrPct] = useState(p.initialTdsrPct ?? DEFAULT_PROFILE.tdsrPct);
+  const [stressRate, setStressRate] = useState(p.initialStressRate ?? DEFAULT_PROFILE.stressRate);
 
   const [hydrated, setHydrated] = useState(false);
 
@@ -41,6 +56,11 @@ export default function RoiCalculator(p: Props) {
         if (typeof pr.vacancyMonths === "number") setVacancy(pr.vacancyMonths);
         if (typeof pr.includeTax === "boolean") setIncludeTax(pr.includeTax);
         if (typeof pr.taxRate === "number") setIncomeTax(pr.taxRate);
+        if (typeof pr.includeTdsr === "boolean") setIncludeTdsr(pr.includeTdsr);
+        if (typeof pr.salary === "number") setSalary(pr.salary);
+        if (typeof pr.monthlyDebts === "number") setMonthlyDebts(pr.monthlyDebts);
+        if (typeof pr.tdsrPct === "number") setTdsrPct(pr.tdsrPct);
+        if (typeof pr.stressRate === "number") setStressRate(pr.stressRate);
       } catch {}
     }
     setHydrated(true);
@@ -49,10 +69,10 @@ export default function RoiCalculator(p: Props) {
   useEffect(() => {
     if (!hydrated) return;
     const payload = encodeURIComponent(
-      JSON.stringify({ cash, cpf, age, rate, includeTax, taxRate: incomeTax, vacancyMonths: vacancy })
+      JSON.stringify({ cash, cpf, age, rate, includeTax, taxRate: incomeTax, vacancyMonths: vacancy, includeTdsr, salary, monthlyDebts, tdsrPct, stressRate })
     );
     document.cookie = `${PROFILE_COOKIE}=${payload}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
-  }, [hydrated, cash, cpf, age, rate, includeTax, incomeTax, vacancy]);
+  }, [hydrated, cash, cpf, age, rate, includeTax, incomeTax, vacancy, includeTdsr, salary, monthlyDebts, tdsrPct, stressRate]);
 
   // Min cash down = max(5% floor, gap to reach 25% if CPF is insufficient)
   const minDownpayment = p.price * 0.25;
@@ -84,6 +104,44 @@ export default function RoiCalculator(p: Props) {
       }),
     [p, cash, cpf, age, rate, extraCash, vacancy, includeTax, incomeTax]
   );
+
+  // TDSR check: does the current instalment exceed what the bank allows?
+  const tdsrCheck = useMemo(() => {
+    if (!includeTdsr) return null;
+    const tdsrCeiling = salary * (tdsrPct / 100);
+    const available = Math.max(0, tdsrCeiling - monthlyDebts);
+    // Banks assess at stress rate
+    const stressMonthly = stressRate / 100 / 12;
+    const tenureYears = Math.max(0, Math.min(30, 65 - age));
+    const nMonths = tenureYears * 12;
+    // Instalment at stress rate for current loan
+    const instalmentAtStress = nMonths > 0
+      ? pmtCalc(roi.loan, stressMonthly, nMonths)
+      : 0;
+    const exceeded = instalmentAtStress > available;
+    // Minimum cash down to bring instalment within TDSR: solve for loan
+    // where PMT(loan, stressRate, tenure) = available.
+    // maxLoanTdsr = PV(available, stressMonthly, nMonths)
+    let minCashForTdsr: number | null = null;
+    if (exceeded && nMonths > 0) {
+      const maxLoanTdsr = stressMonthly > 0
+        ? available * (1 - Math.pow(1 + stressMonthly, -nMonths)) / stressMonthly
+        : available * nMonths;
+      const minLoanReduction = roi.loan - maxLoanTdsr;
+      if (minLoanReduction > 0) {
+        // This much extra cash is needed beyond current effective down
+        minCashForTdsr = Math.max(0, minLoanReduction);
+      }
+    }
+    return {
+      tdsrCeiling,
+      available,
+      instalmentAtStress,
+      exceeded,
+      minCashForTdsr,
+      stressRateUsed: stressRate,
+    };
+  }, [includeTdsr, salary, monthlyDebts, tdsrPct, stressRate, age, roi.loan]);
 
   return (
     <section className="border rounded-lg p-6 space-y-4 bg-gray-50">
@@ -139,6 +197,34 @@ export default function RoiCalculator(p: Props) {
           Not affordable: {roi.affordabilityNote}
         </div>
       )}
+      {tdsrCheck && (
+        <div className={`text-xs border rounded p-3 space-y-1 ${tdsrCheck.exceeded ? "text-red-700 bg-red-50 border-red-200" : "text-green-700 bg-green-50 border-green-200"}`}>
+          <div className="font-semibold">{tdsrCheck.exceeded ? "TDSR exceeded" : "TDSR OK"}</div>
+          <div>
+            Bank stress-test instalment: {fmt(tdsrCheck.instalmentAtStress)}/mo at {tdsrCheck.stressRateUsed}% ·
+            TDSR ceiling: {fmt(tdsrCheck.available)}/mo available ({fmt(tdsrCheck.tdsrCeiling)} total − {fmt(monthlyDebts)} debts)
+          </div>
+          {tdsrCheck.exceeded && tdsrCheck.minCashForTdsr != null && (
+            <div className="font-medium pt-1">
+              Increase cash downpayment by at least {fmt(tdsrCheck.minCashForTdsr)} to bring the loan within TDSR.
+              {tdsrCheck.minCashForTdsr + effectiveCashDown <= cash && (
+                <button
+                  type="button"
+                  className="ml-2 text-red-800 underline"
+                  onClick={() => setCashDown(effectiveCashDown + tdsrCheck.minCashForTdsr!)}
+                >
+                  Set to {fmt(effectiveCashDown + tdsrCheck.minCashForTdsr)}
+                </button>
+              )}
+              {tdsrCheck.minCashForTdsr + effectiveCashDown > cash && (
+                <span className="ml-1 text-red-600">
+                  (exceeds your available cash of {fmt(cash)})
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
         <Row label={`Loan / tenure (${roi.ltvPct.toFixed(0)}% LTV)`} value={`${fmt(roi.loan)} · ${roi.tenureYears}y`} />
@@ -183,6 +269,14 @@ export default function RoiCalculator(p: Props) {
           tone={roi.cashOnCashPct >= 0 ? "good" : "bad"}
           tip="Annual cash flow ÷ cash you put down. The return on your own cash; CPF doesn't count here."
         />
+        {tdsrCheck && (
+          <Row
+            label={`TDSR instalment (${tdsrCheck.stressRateUsed}%)`}
+            value={`${fmt(tdsrCheck.instalmentAtStress)} / ${fmt(tdsrCheck.available)}`}
+            tone={tdsrCheck.exceeded ? "bad" : "good"}
+            tip="Monthly instalment at bank stress-test rate vs your available TDSR headroom. Must be within limit for bank approval."
+          />
+        )}
       </div>
     </section>
   );

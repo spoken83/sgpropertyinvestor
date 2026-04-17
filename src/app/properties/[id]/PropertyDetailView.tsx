@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card, CardBody, CardHeader, Chip } from "@heroui/react";
 import { MapPin, Buildings, Calendar, Users } from "@phosphor-icons/react/dist/ssr";
 import RoiCalculator from "./RoiCalculator";
+import CapitalAppreciation from "./CapitalAppreciation";
 import BackButton from "@/components/BackButton";
 import ExpandableHistory from "./ExpandableHistory";
 import type { ProjectDetail } from "@/lib/projectDetail";
@@ -26,6 +27,11 @@ type Props = {
   profileCpf: number;
   profileAge: number;
   profileRate: number;
+  profileIncludeTdsr: boolean;
+  profileSalary: number;
+  profileMonthlyDebts: number;
+  profileTdsrPct: number;
+  profileStressRate: number;
 };
 
 export default function PropertyDetailView({
@@ -40,6 +46,11 @@ export default function PropertyDetailView({
   profileCpf,
   profileAge,
   profileRate,
+  profileIncludeTdsr,
+  profileSalary,
+  profileMonthlyDebts,
+  profileTdsrPct,
+  profileStressRate,
 }: Props) {
   const typeRow = type ? p.byUnitType.find((u) => u.unitType === type) : undefined;
 
@@ -210,8 +221,19 @@ export default function PropertyDetailView({
           segment={p.marketSegment as "CCR" | "RCR" | "OCR" | null}
           tenure={p.tenure}
           propertyType={p.recentTxns[0]?.propertyType ?? null}
+          initialIncludeTdsr={profileIncludeTdsr}
+          initialSalary={profileSalary}
+          initialMonthlyDebts={profileMonthlyDebts}
+          initialTdsrPct={profileTdsrPct}
+          initialStressRate={profileStressRate}
         />
       )}
+
+      <CapitalAppreciation
+        ca={p.caByUnitType.find((c) => c.unitType === (type ?? "Overall"))}
+        viewLabel={type ?? "Overall"}
+      />
+
 
       <section className="grid md:grid-cols-2 gap-4">
         <ExpandableHistory title="Recent sales" total={p.recentTxns.length}>

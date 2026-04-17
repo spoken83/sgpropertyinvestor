@@ -31,6 +31,7 @@ type SP = {
   q?: string;
   type?: string;
   minYield?: string;
+  minCa?: string;
   positive?: string;
   sort?: string;
   dir?: string;
@@ -53,6 +54,7 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
   const query = (sp.q ?? "").trim();
   const unitType = (sp.type as "Studio" | "1BR" | "2BR" | "3BR" | "4BR+" | undefined) || undefined;
   const minYield = sp.minYield ? Number(sp.minYield) : undefined;
+  const minCa = sp.minCa ? Number(sp.minCa) : undefined;
   const positiveOnly = sp.positive === "1";
   const sortKey = (sp.sort as SortKey) || "grossYieldPct";
   const dir: "asc" | "desc" = sp.dir === "asc" ? "asc" : "desc";
@@ -82,6 +84,7 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
     if (!matchOp(psfOp, psfVal, r.medianPsf)) return false;
     if (!matchOp(ageOp, ageVal, r.completionYear != null ? currentYear - r.completionYear : null)) return false;
     if (minYield != null && r.grossYieldPct < minYield) return false;
+    if (minCa != null && (r.caScore == null || r.caScore < minCa)) return false;
     if (query) {
       if (!r.name.toLowerCase().includes(qLower)) return false;
     } else {
@@ -141,6 +144,7 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
     "grossYieldPct",
     "cashOnCashPct",
     "turnoverPct",
+    "caScore",
   ];
   const sortUrls = Object.fromEntries(
     sortKeys.map((k) => {
@@ -194,6 +198,7 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
             q: query,
             type: unitType ?? "",
             minYield: sp.minYield ?? "",
+            minCa: sp.minCa ?? "",
             positive: positiveOnly ? "1" : "",
           }}
         />

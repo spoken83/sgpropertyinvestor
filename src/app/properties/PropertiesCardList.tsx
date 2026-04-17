@@ -22,6 +22,13 @@ const segmentColor = (s: string | null): "primary" | "secondary" | "default" => 
   return "default";
 };
 
+function caColor(score: number | null): string {
+  if (score == null) return "text-default-400";
+  if (score >= 65) return "text-success-700";
+  if (score >= 40) return "text-warning-700";
+  return "text-danger-600";
+}
+
 export default function PropertiesCardList({ rows }: { rows: Row[] }) {
   return (
     <div className="space-y-3">
@@ -57,14 +64,16 @@ export default function PropertiesCardList({ rows }: { rows: Row[] }) {
                   </div>
                   <div className="flex gap-3 flex-shrink-0">
                     <div className="text-right">
-                      <div className="text-base font-bold tabular-nums">{r.grossYieldPct.toFixed(2)}%</div>
-                      <div className="text-[10px] text-default-500 uppercase tracking-wide">Yield</div>
-                    </div>
-                    <div className="text-right border-l border-default-200 pl-3">
                       <div className={`text-base font-bold tabular-nums ${r.cashOnCashPct >= 0 ? "text-success-700" : "text-danger-600"}`}>
                         {r.cashOnCashPct >= 0 ? "+" : ""}{r.cashOnCashPct.toFixed(1)}%
                       </div>
                       <div className="text-[10px] text-default-500 uppercase tracking-wide">Cash ROI</div>
+                    </div>
+                    <div className="text-right border-l border-default-200 pl-3">
+                      <div className={`text-base font-bold tabular-nums ${caColor(r.caScore)}`}>
+                        {r.caScore != null ? r.caScore.toFixed(0) : "—"}
+                      </div>
+                      <div className="text-[10px] text-default-500 uppercase tracking-wide">CA Score</div>
                     </div>
                   </div>
                 </div>
@@ -97,10 +106,7 @@ export default function PropertiesCardList({ rows }: { rows: Row[] }) {
                     label="Activity"
                     value={r.turnoverPct != null ? `${r.turnoverPct.toFixed(1)}%` : `~${r.rentalsPerYear.toFixed(0)}/y`}
                   />
-                  <Metric
-                    label="Sqft"
-                    value={r.medianSqft ? r.medianSqft.toLocaleString("en-SG", { maximumFractionDigits: 0 }) : "—"}
-                  />
+                  <Metric label="Yield" value={`${r.grossYieldPct.toFixed(2)}%`} />
                 </div>
               </Link>
             </CardBody>

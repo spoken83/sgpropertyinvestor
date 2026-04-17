@@ -23,6 +23,7 @@ type Props = {
     q: string;
     type: string;
     minYield: string;
+    minCa: string;
     positive: string;
   };
 };
@@ -34,6 +35,7 @@ export default function FiltersBar({ defaults }: Props) {
   const [max, setMax] = useState(defaults.max);
   const [q, setQ] = useState(defaults.q);
   const [minYield, setMinYield] = useState(defaults.minYield);
+  const [minCa, setMinCa] = useState(defaults.minCa);
   const [openOnMobile, setOpenOnMobile] = useState(false);
 
   // Count active filters (excluding always-present max price).
@@ -43,6 +45,7 @@ export default function FiltersBar({ defaults }: Props) {
     (defaults.tenure ? 1 : 0) +
     (defaults.type ? 1 : 0) +
     (defaults.minYield ? 1 : 0) +
+    (defaults.minCa ? 1 : 0) +
     (defaults.mrtOp && defaults.mrtVal ? 1 : 0) +
     (defaults.unitsOp && defaults.unitsVal ? 1 : 0) +
     (defaults.psfOp && defaults.psfVal ? 1 : 0) +
@@ -62,14 +65,22 @@ export default function FiltersBar({ defaults }: Props) {
     setMax(defaults.max);
     setQ(defaults.q);
     setMinYield(defaults.minYield);
-  }, [defaults.max, defaults.q, defaults.minYield]);
+    setMinCa(defaults.minCa);
+  }, [defaults.max, defaults.q, defaults.minYield, defaults.minCa]);
 
   function navigate(overrides: Partial<typeof defaults>) {
     const params = new URLSearchParams(sp.toString());
+    // Start from every known filter's current value, then apply local text-input
+    // state (user may have typed but not committed), then apply caller overrides.
+    // This prevents filters from being silently dropped when a different filter
+    // is changed — e.g. the "Exclude negative Cash ROI" checkbox used to clear
+    // itself whenever another filter was updated.
     const merged: Record<string, string> = {
+      ...defaults,
       max: String(max),
       q,
       minYield,
+      minCa,
       ...Object.fromEntries(
         Object.entries(overrides).map(([k, v]) => [k, String(v ?? "")])
       ),
@@ -237,7 +248,18 @@ export default function FiltersBar({ defaults }: Props) {
           placeholder="e.g. 10"
           unit="yr"
         />
-        <div className="md:col-span-2 flex items-end h-full pb-1">
+        <Input
+          size="sm"
+          label="Min CA Score"
+          placeholder="e.g. 60"
+          value={minCa}
+          onValueChange={setMinCa}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+          endContent={<span className="text-xs text-default-400">/100</span>}
+          inputMode="numeric"
+        />
+        <div className="flex items-end h-full pb-1">
           <Checkbox
             size="sm"
             isSelected={defaults.positive === "1"}

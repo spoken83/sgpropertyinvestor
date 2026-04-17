@@ -1,8 +1,19 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getProjectDetail } from "@/lib/projectDetail";
 import { getProfile } from "@/lib/profile";
 import { computeAffordability } from "@/lib/affordability";
 import PropertyDetailView from "./PropertyDetailView";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const p = await getProjectDetail(Number(id));
+  return { title: p?.name ?? "Property" };
+}
 
 function medianSqft(p: Awaited<ReturnType<typeof getProjectDetail>>): number {
   if (!p) return 1000;
@@ -28,6 +39,11 @@ export default async function PropertyDetailPage({
     cpf: profile.cpf,
     age: profile.age,
     annualRatePct: profile.rate,
+    includeTdsr: profile.includeTdsr,
+    salary: profile.salary,
+    monthlyDebts: profile.monthlyDebts,
+    tdsrPct: profile.tdsrPct,
+    stressRate: profile.stressRate,
   });
 
   const typeRow = type ? p.byUnitType.find((u) => u.unitType === type) : undefined;
@@ -51,6 +67,11 @@ export default async function PropertyDetailPage({
       profileCpf={profile.cpf}
       profileAge={profile.age}
       profileRate={profile.rate}
+      profileIncludeTdsr={profile.includeTdsr}
+      profileSalary={profile.salary}
+      profileMonthlyDebts={profile.monthlyDebts}
+      profileTdsrPct={profile.tdsrPct}
+      profileStressRate={profile.stressRate}
     />
   );
 }

@@ -67,22 +67,35 @@ Live local dev: `http://localhost:3001`
 - `scrapeEdgeProp.ts` — resumable, rate-limited scraper pulling `__NEXT_DATA__` for developer / TOP year / total units / exact coords / planning area.
 
 ### Affordability & ROI engine (`src/lib/affordability.ts`, `src/lib/roi.ts`)
-- Max-affordable-price calculation: 75% LTV, `min(30, 65−age)` tenure, 5% cash floor, **max-out CPF first** strategy. `extraCashDownpayment` slider adds more cash down to shrink the loan.
+- Max-affordable-price calculation: 75% LTV, `min(30, 65−age)` tenure, 5% cash floor, **deploy all CPF** strategy (no 20% cap — excess CPF reduces the loan). Cash deployment slider on the home page lets you trade liquidity for a higher max price.
+- **TDSR constraint** (optional): income-based loan cap at 55% of gross salary minus existing debts, assessed at a configurable bank stress-test rate (default 4% p.a.). When TDSR is binding, deploying more cash raises the affordable price. The slider auto-caps at the analytical optimum where all cash is deployed.
 - Full annual P&L: gross rent → vacancy → MCST estimate → property tax (12% of AV ≈ 12% of annual rent) → maintenance buffer (2%) → rental income tax (toggleable) → net rental income → mortgage repayment → annual cash flow.
 - Returns: gross yield, net yield, cash-on-cash ROI.
+- **TDSR check on detail page**: red/green banner showing whether the current loan exceeds the TDSR ceiling, with auto-suggested minimum cash deployment to bring the instalment within limit.
 
 ### Ranking engine (`src/lib/ranking.ts`)
 - Single SQL with CTEs producing **(project, unit-type) rows**: `percentile_cont` median price, median PSF, median rent, txn count, rental count, project-wide rentals/yr, turnover %.
+- LEFT JOINs `project_metrics` to surface CA Score, momentum, and peer spread.
 - Unit-type classification: sqm→sqft for transactions; midpoint of range for rentals (matches the detail-page JS classifier exactly).
-- Filters pushed into SQL where reasonable; ROI-dependent filters applied in-JS post-fetch.
+- Filters pushed into SQL where reasonable; ROI-dependent filters applied in-JS post-fetch. Min CA Score filter also supported.
 - **Cached via `unstable_cache`** (1h revalidate) so repeat list-page navigations hit memory, not the DB.
+
+### Capital appreciation engine (`src/scripts/computeCapitalAppreciation.ts`, `src/lib/lease.ts`)
+- **Quarterly median PSF** per (project, unit-type) over 20 quarters (5 years) from the `transactions` table.
+- **Weighted linear regression** (recency × √n) → annualised momentum (%/yr) + residual σ → volatility + 90% forecast band (4 quarters ahead).
+- **1km peer cohort** via haversine (grid-indexed for speed, fallback to 2km). Distance-weighted (Gaussian σ=500m) median of peers' quarterly PSF.
+- **Bala's-table lease normalisation** (`src/lib/lease.ts`): observed PSFs are converted to freehold-equivalent using SLA's published Bala's Table (21 anchors, linearly interpolated) before computing peer spread. This prevents short-lease properties near freehold towers from registering a false discount.
+- **Lease decay tile**: derived from Bala's Table slope at current remaining years (e.g. "−0.86%/yr · 69 yrs left"). Shown separately from CA Score — not baked into the composite.
+- **Composite CA Score (0–100)**: percentile rank within unit-type cohort of weighted combination: 35% momentum + 30% (−peer spread) + 20% volume + 15% (−volatility).
+- Populates `project_metrics` table (4,519 rows). Run after each ingest: `npx tsx src/scripts/computeCapitalAppreciation.ts`.
 
 ### UX
 - **List page**:
   - Desktop: 12-column sortable table with sticky headers, project-side (tinted) vs unit-side columns.
   - Mobile portrait: card list — each project is a tappable HeroUI Card with Yield + Cash ROI in the top-right.
   - Mobile landscape & tablet+: switches back to the table via Tailwind's `landscape:` variant.
-  - Filters: Search by name, Max price, Zone, Tenure, Unit type, Min gross yield, No. units (≥ / ≤ / =), MRT distance, PSF, Age, "Exclude negative Cash ROI".
+  - Filters: Search by name, Max price, Zone, Tenure, Unit type, Min gross yield, Min CA Score, No. units (≥ / ≤ / =), MRT distance, PSF, Age, "Exclude negative Cash ROI".
+  - **Sortable CA Score column** (colour-coded green/yellow/red) with hover tooltip showing momentum + peer spread detail.
   - **Mobile-collapsible filter panel** with active-filter count badge + "Clear all" button.
   - Server-side sort (URL-driven ▼/▲), pagination (50/page), URL state preservation.
   - Navigation uses `startTransition` + a localized spinner overlay — data table stays visible during updates (no flicker).
@@ -91,8 +104,12 @@ Live local dev: `http://localhost:3001`
   - Unit-type selector (1BR / 2BR / 3BR / 4BR+ / Overall) drives every downstream metric + ROI calc.
   - Stat tiles switch between overall and per-unit-type values live.
   - Recent sales + rentals start at 10 rows, expand to full history.
+- **Detail page (continued)**:
+  - **Capital Appreciation card** under Investment Analysis: composite CA Score badge (green ≥65 / yellow ≥40 / red) + verbal hint, 4 stat tiles (Momentum %/yr, vs 1km peers lease-adjusted, Volume/yr, Volatility) + lease-decay tile (Bala's-table-derived %/yr + years remaining), Recharts fan chart (subject history, peer dashed line, 4-quarter forecast cone with 90% band), projected PSF range + peer cohort summary, caveats.
 - **Home page**:
   - HeroUI Card for funds + affordability, collapsible "Advanced assumptions" accordion.
+  - **TDSR constraint** toggle: reveals salary, existing debts, TDSR ceiling %, and bank stress-test rate inputs.
+  - **Cash deployment slider**: min (5% floor) to optimal max, with quick-set buttons. Shows cash used vs kept liquid in real-time. When TDSR is binding, sliding right raises max property price.
   - CTA: "Find my best ROI matches" with caption explaining the engine.
 - **Transitions**:
   - React View Transitions API — slide-up on forward nav, slide-down on back.
@@ -124,9 +141,10 @@ src/
 │     ├─ ResultsOverlay.tsx      # Motion-animated "Updating…" pill
 │     ├─ RememberListUrl.tsx     # Saves current list URL to sessionStorage
 │     └─ [id]/
-│        ├─ page.tsx             # Server — fetches project + profile
+│        ├─ page.tsx             # Server — fetches project + profile + generateMetadata
 │        ├─ PropertyDetailView.tsx  # Client — all HeroUI JSX
-│        ├─ RoiCalculator.tsx    # Client — ROI panel + cash slider
+│        ├─ RoiCalculator.tsx    # Client — ROI panel + cash slider + TDSR check
+│        ├─ CapitalAppreciation.tsx # Client — CA card + fan chart + lease decay
 │        └─ ExpandableHistory.tsx  # Client — 10 → all rows
 ├─ components/
 │  ├─ BackButton.tsx        # Round icon button, emits nav-back transition type
@@ -135,10 +153,11 @@ src/
 │  └─ Spinner.tsx           # HeroUI Spinner wrapper
 ├─ lib/
 │  ├─ db.ts                 # Neon + Drizzle client
-│  ├─ schema.ts             # projects, transactions, rentals
-│  ├─ ranking.ts            # getAllRanked (cached) + rankProjects
-│  ├─ projectDetail.ts      # getProjectDetail — per-unit-type aggregation in JS
-│  ├─ affordability.ts      # max price + tenure + PMT
+│  ├─ schema.ts             # projects, transactions, rentals, project_metrics
+│  ├─ ranking.ts            # getAllRanked (cached) + rankProjects (CA Score joined)
+│  ├─ projectDetail.ts      # getProjectDetail — per-unit-type aggregation + CA metrics
+│  ├─ affordability.ts      # max price + tenure + PMT + TDSR + cash slider
+│  ├─ lease.ts              # Bala's Table, FH-equiv factor, lease decay %/yr
 │  ├─ roi.ts                # full P&L + yields + cash-on-cash
 │  ├─ mcst.ts               # MCST fee estimator ($300–700 range)
 │  ├─ units.ts              # sqft → unit-type bucketing
@@ -164,7 +183,6 @@ src/
 
 ### Medium priority
 - **Net-yield column on the list** — currently only Cash ROI takes financing into account; a pure net yield column (before financing) would help compare properties as assets.
-- **Price trend sparkline** — per-project 5yr median PSF chart on the detail page using Recharts (already installed, unused).
 - **Save-to-shortlist** — localStorage- or cookie-backed ability to mark favourites, then compare them side-by-side.
 - **Stress test on the ROI calculator** — auto-recompute under rate-up scenarios (4% / 5%) and higher vacancy (2mo / 3mo) and show them as a side column.
 
@@ -194,6 +212,7 @@ npx tsx src/scripts/ingestPipeline.ts
 npx tsx src/scripts/convertCoords.ts
 npx tsx src/scripts/enrichGeo.ts
 npx tsx src/scripts/scrapeEdgeProp.ts   # ~2.5h at 3s/request
+npx tsx src/scripts/computeCapitalAppreciation.ts  # ~10s, populates project_metrics
 
 npm run dev -- -p 3001
 ```
