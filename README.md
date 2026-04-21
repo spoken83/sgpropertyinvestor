@@ -2,7 +2,7 @@
 
 A data-driven investment finder for Singapore private residential property. Takes your financial profile (cash, CPF, age, loan rate) and ranks every private condo / apartment / EC by **actual investment outcomes** — gross yield, net yield, cash-on-cash ROI and rental activity — broken down **per unit type (Studio / 1BR / 2BR / 3BR / 4BR+)** so hidden gems (e.g., a $990k 1BR inside a $1.75M-median CCR project) surface cleanly instead of being averaged away.
 
-Live local dev: `http://localhost:3001`
+Live: [https://sgproperty.gordonfrois.com](https://sgproperty.gordonfrois.com) · Local dev: `http://localhost:3001`
 
 ---
 
@@ -81,13 +81,16 @@ Live local dev: `http://localhost:3001`
 - **Cached via `unstable_cache`** (1h revalidate) so repeat list-page navigations hit memory, not the DB.
 
 ### Capital appreciation engine (`src/scripts/computeCapitalAppreciation.ts`, `src/lib/lease.ts`)
-- **Quarterly median PSF** per (project, unit-type) over 20 quarters (5 years) from the `transactions` table.
+- **Hybrid model**: momentum, volatility, volume, and forecast are computed from the **Overall** series (project-level — same building, same appreciation). Peer spread and fair value are computed **per unit type** (1BR vs neighbouring 1BRs, etc.).
+- **Quarterly median PSF** over 20 quarters (5 years) from the `transactions` table. Minimum 3 txns across 3 quarters.
 - **Weighted linear regression** (recency × √n) → annualised momentum (%/yr) + residual σ → volatility + 90% forecast band (4 quarters ahead).
-- **1km peer cohort** via haversine (grid-indexed for speed, fallback to 2km). Distance-weighted (Gaussian σ=500m) median of peers' quarterly PSF.
-- **Bala's-table lease normalisation** (`src/lib/lease.ts`): observed PSFs are converted to freehold-equivalent using SLA's published Bala's Table (21 anchors, linearly interpolated) before computing peer spread. This prevents short-lease properties near freehold towers from registering a false discount.
-- **Lease decay tile**: derived from Bala's Table slope at current remaining years (e.g. "−0.86%/yr · 69 yrs left"). Shown separately from CA Score — not baked into the composite.
-- **Composite CA Score (0–100)**: percentile rank within unit-type cohort of weighted combination: 35% momentum + 30% (−peer spread) + 20% volume + 15% (−volatility).
-- Populates `project_metrics` table (4,519 rows). Run after each ingest: `npx tsx src/scripts/computeCapitalAppreciation.ts`.
+- **1km peer cohort** via haversine (grid-indexed for speed, fallback to 2km). Bucketed distance weights: 0–250m = 1.0, 250–500m = 0.5, 500m–1km = 0.2. Peers must have sufficient data for the same unit type — sparse peers excluded.
+- **Bala's-table lease normalisation** (`src/lib/lease.ts`): observed PSFs are converted to freehold-equivalent using SLA's published Bala's Table (21 anchors, linearly interpolated) before computing peer spread.
+- **Fair value PSF**: peer FH-equiv median converted back to the subject's lease basis. Displayed as undervalued/fair/overvalued with % diff and both PSF values.
+- **Lease runway score** (0–100): reflects real-world financing cliffs at 60yr and 40yr remaining (CPF restrictions, bank LTV limits), not just Bala's smooth curve.
+- **Peer spread scaled by lease runway**: short-lease "discounts" are structural (age + lease burn), not mean-reversion opportunities. Full credit only for freehold/long-lease properties.
+- **Composite CA Score (0–100)**: percentile rank within unit-type cohort: 30% momentum + 20% peer spread (×leaseRunway/100) + 15% volume + 10% (−volatility) + 25% lease runway.
+- Populates `project_metrics` table (~5,900 rows). Run after each ingest: `npx tsx src/scripts/computeCapitalAppreciation.ts`.
 
 ### UX
 - **List page**:
@@ -103,13 +106,16 @@ Live local dev: `http://localhost:3001`
   - Polished HeroUI header with MapPin + chips (tenure, TOP/age, units, MRT, developer).
   - Unit-type selector (1BR / 2BR / 3BR / 4BR+ / Overall) drives every downstream metric + ROI calc.
   - Stat tiles switch between overall and per-unit-type values live.
-  - Recent sales + rentals start at 10 rows, expand to full history.
+  - Recent sales + rentals filtered by selected unit type; "Overall" shows all.
+  - Unit-type table highlights the active row.
 - **Detail page (continued)**:
-  - **Capital Appreciation card** under Investment Analysis: composite CA Score badge (green ≥65 / yellow ≥40 / red) + verbal hint, 4 stat tiles (Momentum %/yr, vs 1km peers lease-adjusted, Volume/yr, Volatility) + lease-decay tile (Bala's-table-derived %/yr + years remaining), Recharts fan chart (subject history, peer dashed line, 4-quarter forecast cone with 90% band), projected PSF range + peer cohort summary, caveats.
+  - **Capital Appreciation card** under Investment Analysis: composite CA Score badge (green ≥55 / yellow ≥30 / red) + verbal hint, 5 stat tiles (Momentum %/yr, vs 1km peers with fair value + undervalued/overvalued label, Volume/yr, Volatility, Lease Decay %/yr + years remaining), Recharts fan chart (subject history, peer dashed line, 4-quarter forecast cone with 90% band), projected PSF range, collapsible peer projects table (name, tenure, lease remaining, PSF, distance — clickable links).
+  - **Hybrid CA model**: momentum/volatility/volume/forecast from Overall series (project-level); peer spread per unit type (type-specific comparison).
 - **Home page**:
+  - **Onboarding splash** (3 screens, first visit only): mini UI mockups introducing the ranking table, CA chart, and personalised funds. Stored in localStorage.
   - HeroUI Card for funds + affordability, collapsible "Advanced assumptions" accordion.
   - **TDSR constraint** toggle: reveals salary, existing debts, TDSR ceiling %, and bank stress-test rate inputs.
-  - **Cash deployment slider**: min (5% floor) to optimal max, with quick-set buttons. Shows cash used vs kept liquid in real-time. When TDSR is binding, sliding right raises max property price.
+  - **Cash deployment slider**: min (5% floor) to optimal max, with quick-set buttons. Shows cash used vs kept liquid in real-time. When TDSR is binding, sliding right raises max property price. Full CPF deployed (no 20% cap).
   - CTA: "Find my best ROI matches" with caption explaining the engine.
 - **Transitions**:
   - React View Transitions API — slide-up on forward nav, slide-down on back.
@@ -148,6 +154,7 @@ src/
 │        └─ ExpandableHistory.tsx  # Client — 10 → all rows
 ├─ components/
 │  ├─ BackButton.tsx        # Round icon button, emits nav-back transition type
+│  ├─ OnboardingSplash.tsx   # 3-screen onboarding overlay with mini UI mockups
 │  ├─ MoneyInput.tsx        # HeroUI Input with $ + thousands formatting
 │  ├─ OpFilter.tsx          # ≥/≤/= + numeric operand filter
 │  └─ Spinner.tsx           # HeroUI Spinner wrapper
