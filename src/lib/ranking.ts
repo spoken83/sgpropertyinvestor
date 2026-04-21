@@ -64,7 +64,7 @@ export type RankFilters = {
 // Bumping the cache key when new columns are added to RankedUnitType (e.g. caScore).
 export const getAllRanked = unstable_cache(
   async () => rankProjects({ minPrice: 0, maxPrice: Number.MAX_SAFE_INTEGER, ignorePriceBand: true }),
-  ["ranked-all-v2-ca"],
+  ["ranked-all-v4-scaled-spread"],
   { revalidate: 3600, tags: ["ranked"] }
 );
 

@@ -22,25 +22,35 @@ import { db } from "@/lib/db";
 import { projectMetrics } from "@/lib/schema";
 import { sql } from "drizzle-orm";
 import { haversineMeters } from "@/lib/geo";
-import { fhEquivFactor, leaseDecayPctYr, yearsRemaining } from "@/lib/lease";
+import { fhEquivFactor, leaseDecayPctYr, leaseRunwayScore, yearsRemaining } from "@/lib/lease";
 
 // ─── Tunables ────────────────────────────────────────────────────────────────
 const LOOKBACK_QUARTERS = 20;
 const FORECAST_QUARTERS = 4;
-const MIN_TXNS = 6;
-const MIN_QUARTERS = 4;
+const MIN_TXNS = 3;
+const MIN_QUARTERS = 3;
 const PEER_RADIUS_M_PRIMARY = 1000;
 const PEER_RADIUS_M_FALLBACK = 2000;
 const MIN_PEERS = 3;
 const RECENCY_TAU = 8; // quarters
-const CA_WEIGHTS = { momentum: 0.35, spread: 0.30, volume: 0.20, volatility: 0.15 };
+const CA_WEIGHTS = { momentum: 0.30, spread: 0.20, volume: 0.15, volatility: 0.10, leaseRunway: 0.25 };
 
 type UnitType = "Studio" | "1BR" | "2BR" | "3BR" | "4BR+" | "Overall";
 const ALL_UNIT_TYPES: UnitType[] = ["Studio", "1BR", "2BR", "3BR", "4BR+", "Overall"];
 
 type QuarterPoint = { qIdx: number; qLabel: string; psf: number; n: number };
+type PeerProjectInfo = {
+  id: number;
+  name: string;
+  tenure: string | null;
+  leaseYr: number | null;
+  distanceM: number;
+  currentPsf: number | null;
+};
 type ProjectLoc = {
   id: number;
+  name: string;
+  tenure: string | null;
   lat: number;
   lng: number;
   leaseYr: number | null;
@@ -54,6 +64,7 @@ type Metrics = {
   volumeTxnsYr: number | null;
   volatilityPct: number | null;
   currentPsf: number | null;
+  fairValuePsf: number | null;
   forecastLowPsf: number | null;
   forecastMidPsf: number | null;
   forecastHighPsf: number | null;
@@ -61,6 +72,7 @@ type Metrics = {
   peerSeries: Array<{ q: string; psf: number; nPeers: number }>;
   peerCount: number;
   peerRadiusM: number;
+  peerProjectsList: PeerProjectInfo[];
   sampleSize: number;
   caScore: number | null;
   leaseYearsRemaining: number | null;
@@ -202,23 +214,25 @@ function findPeers(
   return peers;
 }
 
-// Distance-weighted median over peer projects' "Overall" quarterly PSF, with
-// an optional per-peer multiplier applied to each PSF point (used to
-// FH-equivalent-normalise leasehold peers before comparison).
-// Peers that lack data for a quarter are skipped for that quarter.
+// Distance-weighted median over peer projects' quarterly PSF for a given unit type,
+// with an optional per-peer multiplier (used for FH-equivalent normalisation).
+// Peers that lack data for the specified unit type are skipped entirely.
 function peerWeightedSeries(
   peers: Array<{ id: number; distanceM: number }>,
   allSeries: Map<number, Map<UnitType, QuarterPoint[]>>,
+  unitType: UnitType,
   psfMultiplierById: Map<number, number>
-): Array<{ q: string; psf: number; nPeers: number }> {
+): { series: Array<{ q: string; psf: number; nPeers: number }>; includedPeerIds: number[] } {
   const byQuarter = new Map<number, Array<{ psf: number; w: number }>>();
+  const includedPeerIds: number[] = [];
   for (const peer of peers) {
-    const peerOverall = allSeries.get(peer.id)?.get("Overall");
-    if (!peerOverall) continue;
+    const peerSeries = allSeries.get(peer.id)?.get(unitType);
+    if (!peerSeries || !peerSeries.length) continue;
+    includedPeerIds.push(peer.id);
     const mult = psfMultiplierById.get(peer.id) ?? 1;
-    // Distance weight: Gaussian with σ = 500m. Nearby peers dominate.
-    const w = Math.exp(-((peer.distanceM / 500) ** 2));
-    for (const pt of peerOverall) {
+    // Bucketed distance weight: 0–250m = 1.0, 250–500m = 0.5, 500–1000m = 0.2
+    const w = peer.distanceM <= 250 ? 1.0 : peer.distanceM <= 500 ? 0.5 : 0.2;
+    for (const pt of peerSeries) {
       const arr = byQuarter.get(pt.qIdx) ?? [];
       arr.push({ psf: pt.psf * mult, w: w * pt.n });
       byQuarter.set(pt.qIdx, arr);
@@ -228,7 +242,6 @@ function peerWeightedSeries(
   for (const [qIdx, arr] of byQuarter) {
     const totalW = arr.reduce((s, a) => s + a.w, 0);
     if (totalW === 0) continue;
-    // Weighted median approximation: sort by psf, pick value where cumulative w crosses 50%.
     arr.sort((a, b) => a.psf - b.psf);
     let cum = 0;
     let medianPsf = arr[arr.length - 1].psf;
@@ -241,20 +254,25 @@ function peerWeightedSeries(
     }
     out.push({ q: labelFromQuarterIndex(qIdx), psf: medianPsf, nPeers: arr.length, qIdx });
   }
-  return out.sort((a, b) => a.qIdx - b.qIdx).map(({ qIdx: _q, ...rest }) => rest);
+  return {
+    series: out.sort((a, b) => a.qIdx - b.qIdx).map(({ qIdx: _q, ...rest }) => rest),
+    includedPeerIds,
+  };
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   console.log("Loading project locations…");
   const projRows = (await db.execute(sql`
-    SELECT id, latitude, longitude, tenure, tenure_start_year, completion_year
+    SELECT id, name, tenure, latitude, longitude, tenure_start_year, completion_year
     FROM projects
     WHERE latitude IS NOT NULL AND longitude IS NOT NULL
   `)) as unknown as { rows?: Record<string, unknown>[] };
   const projectList: ProjectLoc[] = (projRows.rows ?? (projRows as unknown as Record<string, unknown>[]))
     .map((r) => ({
       id: Number(r.id),
+      name: String(r.name),
+      tenure: (r.tenure as string) ?? null,
       lat: Number(r.latitude),
       lng: Number(r.longitude),
       leaseYr: yearsRemaining(
@@ -367,113 +385,199 @@ async function main() {
   }
   const latestQIdx = now; // inclusive horizon for weighting/forecast
 
-  // ─── Pass 1: compute per-series raw metrics (still missing peer_spread + ca_score)
-  console.log("Computing per-(project, unit-type) metrics…");
+  // ─── Pass 1: project-level metrics from Overall series + per-type currentPsf
+  // Momentum, volatility, volume, forecast are project-level (same building,
+  // same location → appreciates as a whole). Only peer spread is type-specific.
+  console.log("Computing project-level metrics (Overall) + per-type currentPsf…");
   const pending: Metrics[] = [];
-  const subjectCurrentPsfByProject = new Map<number, number>(); // for peer spread
+  // currentPsf keyed by "projectId-unitType" — used for type-specific peer comparison
+  const currentPsfLookup = new Map<string, number>();
+  // Project-level metrics from the Overall series
+  type ProjectMetricsBase = {
+    momentumPctYr: number;
+    volatilityPct: number;
+    volumeTxnsYr: number;
+    forecastLow: number;
+    forecastMid: number;
+    forecastHigh: number;
+    trendSeries: Array<{ q: string; psf: number; n: number }>;
+    sampleSize: number;
+    currentPsf: number;
+  };
+  const projectBaseMetrics = new Map<number, ProjectMetricsBase>();
 
+  // First pass: compute Overall metrics + all per-type currentPsf lookups
   for (const proj of projectList) {
     const byType = allSeries.get(proj.id);
     if (!byType) continue;
+
+    // Compute Overall project-level metrics
+    const overallSeries = byType.get("Overall");
+    if (overallSeries && overallSeries.length) {
+      const m = seriesMetrics(overallSeries, latestQIdx);
+      if (m) {
+        projectBaseMetrics.set(proj.id, {
+          momentumPctYr: m.momentumPctYr,
+          volatilityPct: m.volatilityPct,
+          volumeTxnsYr: m.volumeTxnsYr,
+          forecastLow: m.forecast.low,
+          forecastMid: m.forecast.mid,
+          forecastHigh: m.forecast.high,
+          trendSeries: overallSeries.map((p) => ({ q: p.qLabel, psf: p.psf, n: p.n })),
+          sampleSize: m.sampleSize,
+          currentPsf: m.currentPsf,
+        });
+        currentPsfLookup.set(`${proj.id}-Overall`, m.currentPsf);
+      }
+    }
+
+    // Build per-type currentPsf (for peer spread only)
     for (const ut of ALL_UNIT_TYPES) {
+      if (ut === "Overall") continue;
       const series = byType.get(ut);
       if (!series || !series.length) continue;
       const m = seriesMetrics(series, latestQIdx);
-      if (!m) continue;
+      if (m) {
+        currentPsfLookup.set(`${proj.id}-${ut}`, m.currentPsf);
+      }
+    }
+  }
 
-      if (ut === "Overall") subjectCurrentPsfByProject.set(proj.id, m.currentPsf);
+  // Emit rows: one per (project, unit-type) that has EITHER Overall metrics OR
+  // per-type currentPsf. Project-level metrics come from Overall; currentPsf
+  // is type-specific (for the peer spread tile) with Overall fallback.
+  for (const proj of projectList) {
+    const base = projectBaseMetrics.get(proj.id);
+    if (!base) continue; // skip projects without Overall data
+    const byType = allSeries.get(proj.id);
+    if (!byType) continue;
+
+    for (const ut of ALL_UNIT_TYPES) {
+      // For non-Overall types, only emit if there's at least some type data OR if it's Overall
+      if (ut !== "Overall" && !currentPsfLookup.has(`${proj.id}-${ut}`)) continue;
+
+      const typePsf = currentPsfLookup.get(`${proj.id}-${ut}`) ?? base.currentPsf;
 
       pending.push({
         projectId: proj.id,
         unitType: ut,
-        momentumPctYr: m.momentumPctYr,
-        peerSpreadPct: null, // filled below
-        volumeTxnsYr: m.volumeTxnsYr,
-        volatilityPct: m.volatilityPct,
-        currentPsf: m.currentPsf,
-        forecastLowPsf: m.forecast.low,
-        forecastMidPsf: m.forecast.mid,
-        forecastHighPsf: m.forecast.high,
-        trendSeries: series.map((p) => ({ q: p.qLabel, psf: p.psf, n: p.n })),
+        // Project-level metrics (from Overall series)
+        momentumPctYr: base.momentumPctYr,
+        volatilityPct: base.volatilityPct,
+        volumeTxnsYr: base.volumeTxnsYr,
+        forecastLowPsf: base.forecastLow,
+        forecastMidPsf: base.forecastMid,
+        forecastHighPsf: base.forecastHigh,
+        trendSeries: base.trendSeries,
+        sampleSize: base.sampleSize,
+        // Type-specific currentPsf (for peer comparison)
+        currentPsf: typePsf,
+        // Filled in Pass 2
+        peerSpreadPct: null,
+        fairValuePsf: null,
         peerSeries: [],
         peerCount: 0,
         peerRadiusM: 0,
-        sampleSize: m.sampleSize,
+        peerProjectsList: [],
         caScore: null,
+        // Project-level lease
         leaseYearsRemaining: proj.leaseYr,
         leaseDecayPctYr: leaseDecayPctYr(proj.leaseYr),
       });
     }
   }
-  console.log(`  ${pending.length} rows with metrics`);
+  console.log(`  ${pending.length} rows with metrics (project-level + per-type)`);
 
-  // ─── Pass 2: peer cohort + peer spread (once per project, applied to all its unit types)
-  console.log("Computing peer cohorts + peer spreads…");
+  // ─── Pass 2: peer cohort + peer spread (per unit type)
+  // Peers are matched by haversine (cached per project), then filtered to only
+  // those with data for the SAME unit type. Peers without data for the viewed
+  // type are excluded from computation AND from the peer projects list.
+  console.log("Computing per-unit-type peer cohorts + peer spreads…");
   const locById = new Map<number, ProjectLoc>(projectList.map((p) => [p.id, p]));
 
-  type PeerResult = {
-    spreadPct: number | null;
-    peerSeries: Array<{ q: string; psf: number; nPeers: number }>;
-    peerCount: number;
-    peerRadiusM: number;
-  };
-  const peerByProject = new Map<number, PeerResult>();
-  // Identity multipliers for the display series — chart shows raw observed peer PSF.
+  // Identity multipliers for display series (raw observed PSF).
   const identityFactors = new Map<number, number>();
   for (const p of projectList) identityFactors.set(p.id, 1);
 
-  for (const proj of projectList) {
-    const subjectPsf = subjectCurrentPsfByProject.get(proj.id);
-    let peers = findPeers(proj, grid, PEER_RADIUS_M_PRIMARY);
-    let radius = PEER_RADIUS_M_PRIMARY;
-    if (peers.length < MIN_PEERS) {
-      peers = findPeers(proj, grid, PEER_RADIUS_M_FALLBACK);
-      radius = PEER_RADIUS_M_FALLBACK;
+  // Cache haversine peer lookups per project (same for all unit types).
+  const geoPeersCache = new Map<number, { peers: Array<{ id: number; distanceM: number }>; radius: number }>();
+
+  for (const m of pending) {
+    // Get or compute geo peers for this project
+    let geoEntry = geoPeersCache.get(m.projectId);
+    if (!geoEntry) {
+      const proj = locById.get(m.projectId)!;
+      let peers = findPeers(proj, grid, PEER_RADIUS_M_PRIMARY);
+      let radius = PEER_RADIUS_M_PRIMARY;
+      if (peers.length < MIN_PEERS) {
+        peers = findPeers(proj, grid, PEER_RADIUS_M_FALLBACK);
+        radius = PEER_RADIUS_M_FALLBACK;
+      }
+      geoEntry = { peers, radius };
+      geoPeersCache.set(m.projectId, geoEntry);
     }
-    if (peers.length < MIN_PEERS || subjectPsf == null) {
-      peerByProject.set(proj.id, {
-        spreadPct: null,
-        peerSeries: [],
-        peerCount: peers.length,
-        peerRadiusM: radius,
-      });
+
+    // Filter to peers with sufficient data for THIS unit type — they must have
+    // passed the seriesMetrics threshold (≥6 txns, ≥4 quarters) and thus have
+    // a currentPsf entry. Peers with sparse data are excluded entirely.
+    const peersWithType = geoEntry.peers.filter((peer) =>
+      currentPsfLookup.has(`${peer.id}-${m.unitType}`)
+    );
+
+    if (peersWithType.length < MIN_PEERS || m.currentPsf == null) {
+      m.peerSpreadPct = null;
+      m.peerSeries = [];
+      m.peerCount = 0;
+      m.peerRadiusM = geoEntry.radius;
+      m.peerProjectsList = [];
       continue;
     }
 
-    // Display series: observed peer PSF (chart readability).
-    const peerSeriesObserved = peerWeightedSeries(peers, allSeries, identityFactors);
+    // Display series: observed peer PSF for this unit type
+    const { series: peerSeriesObserved, includedPeerIds } = peerWeightedSeries(
+      peersWithType, allSeries, m.unitType, identityFactors
+    );
 
-    // Spread series: FH-equivalent-normalised on both sides so a short-lease
-    // subject next to freehold towers doesn't register a false discount.
-    const subjectFhEquiv = subjectPsf * (fhFactorById.get(proj.id) ?? 1);
-    const peerSeriesFhEquiv = peerWeightedSeries(peers, allSeries, fhFactorById);
+    // Spread: FH-equivalent-normalised for this unit type
+    const subjectFhEquiv = m.currentPsf * (fhFactorById.get(m.projectId) ?? 1);
+    const { series: peerSeriesFhEquiv } = peerWeightedSeries(
+      peersWithType, allSeries, m.unitType, fhFactorById
+    );
     const latestPeerFh = peerSeriesFhEquiv.slice(-2);
     const peerCurrentFh =
       latestPeerFh.length > 0
         ? latestPeerFh.reduce((s, p) => s + p.psf, 0) / latestPeerFh.length
         : null;
-    const spreadPct =
+    m.peerSpreadPct =
       peerCurrentFh && peerCurrentFh > 0
         ? ((subjectFhEquiv - peerCurrentFh) / peerCurrentFh) * 100
         : null;
+    // Fair value PSF = peer FH-equiv median converted back to subject's lease basis.
+    // This is what the property "should" trade at if it were priced in line with peers.
+    const subjectBalaFraction = 1 / (fhFactorById.get(m.projectId) ?? 1); // e.g. 0.905 for 83yr
+    m.fairValuePsf = peerCurrentFh != null ? peerCurrentFh * subjectBalaFraction : null;
+    m.peerSeries = peerSeriesObserved;
+    m.peerCount = includedPeerIds.length;
+    m.peerRadiusM = geoEntry.radius;
 
-    peerByProject.set(proj.id, {
-      spreadPct,
-      peerSeries: peerSeriesObserved,
-      peerCount: peers.length,
-      peerRadiusM: radius,
-    });
+    // Build peer project info list with per-type PSF (sorted by distance)
+    const includedSet = new Set(includedPeerIds);
+    m.peerProjectsList = peersWithType
+      .filter((peer) => includedSet.has(peer.id))
+      .sort((a, b) => a.distanceM - b.distanceM)
+      .map((peer) => {
+        const pLoc = locById.get(peer.id);
+        const peerPsf = currentPsfLookup.get(`${peer.id}-${m.unitType}`) ?? null;
+        return {
+          id: peer.id,
+          name: pLoc?.name ?? "",
+          tenure: pLoc?.tenure ?? null,
+          leaseYr: pLoc?.leaseYr ?? null,
+          distanceM: Math.round(peer.distanceM),
+          currentPsf: peerPsf != null ? Math.round(peerPsf) : null,
+        };
+      });
   }
-  for (const m of pending) {
-    const pr = peerByProject.get(m.projectId);
-    if (pr) {
-      m.peerSpreadPct = pr.spreadPct;
-      m.peerSeries = pr.peerSeries;
-      m.peerCount = pr.peerCount;
-      m.peerRadiusM = pr.peerRadiusM;
-    }
-  }
-  void locById;
   void leaseYrById;
 
   // ─── Pass 3: percentile-rank within unit_type cohort → ca_score
@@ -505,18 +609,26 @@ async function main() {
       .sort((a, b) => a - b);
     const sortedVolume = metrics.map((m) => m.volumeTxnsYr ?? 0).sort((a, b) => a - b);
     const sortedNegVol = metrics.map((m) => -(m.volatilityPct ?? 0)).sort((a, b) => a - b);
+    const sortedLeaseRunway = metrics.map((m) => leaseRunwayScore(m.leaseYearsRemaining)).sort((a, b) => a - b);
 
     for (const m of metrics) {
       const rMom = percentileRank(sortedMomentum, m.momentumPctYr ?? 0);
-      const rSpread =
+      const rawSpread =
         m.peerSpreadPct == null ? 50 : percentileRank(sortedNegSpread, -m.peerSpreadPct);
       const rVol = percentileRank(sortedVolume, m.volumeTxnsYr ?? 0);
       const rNegVar = percentileRank(sortedNegVol, -(m.volatilityPct ?? 0));
+      const lrScore = leaseRunwayScore(m.leaseYearsRemaining);
+      const rLease = percentileRank(sortedLeaseRunway, lrScore);
+      // Scale peer spread by lease runway: short-lease "discounts" are structural
+      // (age + lease burn), not mean-reversion opportunities. Full credit only
+      // for freehold/long-lease properties where undervaluation is actionable.
+      const rSpread = rawSpread * (lrScore / 100);
       m.caScore =
         CA_WEIGHTS.momentum * rMom +
         CA_WEIGHTS.spread * rSpread +
         CA_WEIGHTS.volume * rVol +
-        CA_WEIGHTS.volatility * rNegVar;
+        CA_WEIGHTS.volatility * rNegVar +
+        CA_WEIGHTS.leaseRunway * rLease;
     }
   }
 
@@ -545,6 +657,7 @@ async function main() {
         volatilityPct: num2(m.volatilityPct)?.toString() ?? null,
         caScore: num1(m.caScore)?.toString() ?? null,
         currentPsf: num2(m.currentPsf)?.toString() ?? null,
+        fairValuePsf: num2(m.fairValuePsf)?.toString() ?? null,
         forecastLowPsf: num2(m.forecastLowPsf)?.toString() ?? null,
         forecastMidPsf: num2(m.forecastMidPsf)?.toString() ?? null,
         forecastHighPsf: num2(m.forecastHighPsf)?.toString() ?? null,
@@ -552,6 +665,7 @@ async function main() {
         peerSeries: m.peerSeries,
         peerCount: m.peerCount,
         peerRadiusM: m.peerRadiusM,
+        peerProjects: m.peerProjectsList,
         sampleSize: m.sampleSize,
         leaseYearsRemaining: m.leaseYearsRemaining,
         leaseDecayPctYr: num2(m.leaseDecayPctYr)?.toString() ?? null,

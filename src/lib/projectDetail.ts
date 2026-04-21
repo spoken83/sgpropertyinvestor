@@ -10,6 +10,7 @@ export type CaMetrics = {
   volatilityPct: number | null;
   caScore: number | null;
   currentPsf: number | null;
+  fairValuePsf: number | null;
   forecastLowPsf: number | null;
   forecastMidPsf: number | null;
   forecastHighPsf: number | null;
@@ -17,6 +18,7 @@ export type CaMetrics = {
   peerSeries: Array<{ q: string; psf: number; nPeers: number }>;
   peerCount: number | null;
   peerRadiusM: number | null;
+  peerProjects: Array<{ id: number; name: string; tenure: string | null; leaseYr: number | null; distanceM: number; currentPsf: number | null }>;
   sampleSize: number | null;
   leaseYearsRemaining: number | null;
   leaseDecayPctYr: number | null;
@@ -129,8 +131,8 @@ export async function getProjectDetail(id: number): Promise<ProjectDetail | null
   // Capital-appreciation metrics, per unit-type + Overall.
   const caRows = await db.execute(sql`
     SELECT unit_type, momentum_pct_yr, peer_spread_pct, volume_txns_yr, volatility_pct,
-           ca_score, current_psf, forecast_low_psf, forecast_mid_psf, forecast_high_psf,
-           trend_series, peer_series, peer_count, peer_radius_m, sample_size,
+           ca_score, current_psf, fair_value_psf, forecast_low_psf, forecast_mid_psf, forecast_high_psf,
+           trend_series, peer_series, peer_count, peer_radius_m, peer_projects, sample_size,
            lease_years_remaining, lease_decay_pct_yr
     FROM project_metrics
     WHERE project_id = ${id}
@@ -146,6 +148,7 @@ export async function getProjectDetail(id: number): Promise<ProjectDetail | null
     volatilityPct: r.volatility_pct != null ? Number(r.volatility_pct) : null,
     caScore: r.ca_score != null ? Number(r.ca_score) : null,
     currentPsf: r.current_psf != null ? Number(r.current_psf) : null,
+    fairValuePsf: r.fair_value_psf != null ? Number(r.fair_value_psf) : null,
     forecastLowPsf: r.forecast_low_psf != null ? Number(r.forecast_low_psf) : null,
     forecastMidPsf: r.forecast_mid_psf != null ? Number(r.forecast_mid_psf) : null,
     forecastHighPsf: r.forecast_high_psf != null ? Number(r.forecast_high_psf) : null,
@@ -153,6 +156,7 @@ export async function getProjectDetail(id: number): Promise<ProjectDetail | null
     peerSeries: Array.isArray(r.peer_series) ? (r.peer_series as CaMetrics["peerSeries"]) : [],
     peerCount: r.peer_count != null ? Number(r.peer_count) : null,
     peerRadiusM: r.peer_radius_m != null ? Number(r.peer_radius_m) : null,
+    peerProjects: Array.isArray(r.peer_projects) ? (r.peer_projects as CaMetrics["peerProjects"]) : [],
     sampleSize: r.sample_size != null ? Number(r.sample_size) : null,
     leaseYearsRemaining: r.lease_years_remaining != null ? Number(r.lease_years_remaining) : null,
     leaseDecayPctYr: r.lease_decay_pct_yr != null ? Number(r.lease_decay_pct_yr) : null,

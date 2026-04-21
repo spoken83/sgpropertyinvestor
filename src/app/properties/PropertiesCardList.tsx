@@ -22,11 +22,11 @@ const segmentColor = (s: string | null): "primary" | "secondary" | "default" => 
   return "default";
 };
 
-function caColor(score: number | null): string {
-  if (score == null) return "text-default-400";
-  if (score >= 65) return "text-success-700";
-  if (score >= 40) return "text-warning-700";
-  return "text-danger-600";
+function caChipColor(score: number | null): "success" | "warning" | "danger" | "default" {
+  if (score == null) return "default";
+  if (score >= 55) return "success";
+  if (score >= 30) return "warning";
+  return "danger";
 }
 
 export default function PropertiesCardList({ rows }: { rows: Row[] }) {
@@ -69,11 +69,11 @@ export default function PropertiesCardList({ rows }: { rows: Row[] }) {
                       </div>
                       <div className="text-[10px] text-default-500 uppercase tracking-wide">Cash ROI</div>
                     </div>
-                    <div className="text-right border-l border-default-200 pl-3">
-                      <div className={`text-base font-bold tabular-nums ${caColor(r.caScore)}`}>
+                    <div className="text-right border-l border-default-200 pl-3 flex flex-col items-end gap-0.5">
+                      <Chip size="sm" variant="flat" color={caChipColor(r.caScore)} className="text-[11px] font-bold tabular-nums">
                         {r.caScore != null ? r.caScore.toFixed(0) : "—"}
-                      </div>
-                      <div className="text-[10px] text-default-500 uppercase tracking-wide">CA Score</div>
+                      </Chip>
+                      <div className="text-[10px] text-default-500 uppercase tracking-wide">CA</div>
                     </div>
                   </div>
                 </div>

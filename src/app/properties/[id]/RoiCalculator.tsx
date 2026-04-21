@@ -197,32 +197,37 @@ export default function RoiCalculator(p: Props) {
           Not affordable: {roi.affordabilityNote}
         </div>
       )}
-      {tdsrCheck && (
-        <div className={`text-xs border rounded p-3 space-y-1 ${tdsrCheck.exceeded ? "text-red-700 bg-red-50 border-red-200" : "text-green-700 bg-green-50 border-green-200"}`}>
-          <div className="font-semibold">{tdsrCheck.exceeded ? "TDSR exceeded" : "TDSR OK"}</div>
-          <div>
-            Bank stress-test instalment: {fmt(tdsrCheck.instalmentAtStress)}/mo at {tdsrCheck.stressRateUsed}% ·
-            TDSR ceiling: {fmt(tdsrCheck.available)}/mo available ({fmt(tdsrCheck.tdsrCeiling)} total − {fmt(monthlyDebts)} debts)
+      {tdsrCheck && tdsrCheck.exceeded && (
+        <div className="text-xs border border-red-200 rounded p-3 bg-red-50 text-red-800 space-y-2">
+          <div className="font-semibold flex items-center gap-1.5">
+            <span className="text-red-600 text-sm">&#9888;</span>
+            This property exceeds your TDSR limit
           </div>
-          {tdsrCheck.exceeded && tdsrCheck.minCashForTdsr != null && (
-            <div className="font-medium pt-1">
-              Increase cash downpayment by at least {fmt(tdsrCheck.minCashForTdsr)} to bring the loan within TDSR.
-              {tdsrCheck.minCashForTdsr + effectiveCashDown <= cash && (
-                <button
-                  type="button"
-                  className="ml-2 text-red-800 underline"
-                  onClick={() => setCashDown(effectiveCashDown + tdsrCheck.minCashForTdsr!)}
-                >
-                  Set to {fmt(effectiveCashDown + tdsrCheck.minCashForTdsr)}
-                </button>
-              )}
-              {tdsrCheck.minCashForTdsr + effectiveCashDown > cash && (
-                <span className="ml-1 text-red-600">
-                  (exceeds your available cash of {fmt(cash)})
-                </span>
-              )}
+          <div className="text-red-700">
+            Your monthly instalment would be {fmt(tdsrCheck.instalmentAtStress)}, but the bank only allows up to {fmt(tdsrCheck.available)} based on your salary and existing debts.
+          </div>
+          {tdsrCheck.minCashForTdsr != null && tdsrCheck.minCashForTdsr + effectiveCashDown <= cash && (
+            <div className="flex items-center gap-2 pt-1 border-t border-red-200">
+              <span>Deploy more cash to reduce the loan:</span>
+              <button
+                type="button"
+                className="font-semibold text-red-800 underline"
+                onClick={() => setCashDown(effectiveCashDown + tdsrCheck.minCashForTdsr!)}
+              >
+                Set cash to {fmt(effectiveCashDown + tdsrCheck.minCashForTdsr)}
+              </button>
             </div>
           )}
+          {tdsrCheck.minCashForTdsr != null && tdsrCheck.minCashForTdsr + effectiveCashDown > cash && (
+            <div className="pt-1 border-t border-red-200 font-medium">
+              You would need {fmt(tdsrCheck.minCashForTdsr)} more cash than your current downpayment to afford this property within TDSR.
+            </div>
+          )}
+        </div>
+      )}
+      {tdsrCheck && !tdsrCheck.exceeded && (
+        <div className="text-xs border border-green-200 rounded p-3 bg-green-50 text-green-800">
+          <span className="font-semibold">&#10003; TDSR OK</span> — instalment {fmt(tdsrCheck.instalmentAtStress)} is within your {fmt(tdsrCheck.available)}/mo limit.
         </div>
       )}
 

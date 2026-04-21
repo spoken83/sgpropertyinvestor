@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { Card, CardBody, CardHeader, Chip } from "@heroui/react";
-import { MapPin, Buildings, Calendar, Users } from "@phosphor-icons/react/dist/ssr";
+import { MapPin, Buildings, Calendar, Users, Warning } from "@phosphor-icons/react/dist/ssr";
 import RoiCalculator from "./RoiCalculator";
 import CapitalAppreciation from "./CapitalAppreciation";
 import BackButton from "@/components/BackButton";
 import ExpandableHistory from "./ExpandableHistory";
 import type { ProjectDetail } from "@/lib/projectDetail";
+import { unitTypeFromSqft } from "@/lib/units";
 
 const fmt = (n: number | null | undefined) =>
   n == null ? "—" : n.toLocaleString("en-SG", { style: "currency", currency: "SGD", maximumFractionDigits: 0 });
@@ -61,10 +62,13 @@ export default function PropertyDetailView({
       {outOfBudget && (
         <Card className="border-warning-200 bg-warning-50">
           <CardBody className="text-warning-800 text-sm space-y-1">
-            <div className="font-semibold">Outside your current budget</div>
+            <div className="font-semibold flex items-center gap-1.5">
+              <Warning className="w-4 h-4" weight="fill" />
+              Outside your current budget
+            </div>
             <div>
               {typeRow ? `${type} median` : "Median"} price {fmt(analysisPrice)} exceeds your max affordable price{" "}
-              <span className="font-semibold">{fmt(affMaxPrice)}</span> (cash {fmt(profileCash)}, CPF {fmt(profileCpf)}, age {profileAge}, rate {profileRate}%).
+              <span className="font-semibold">{fmt(affMaxPrice)}</span> based on your funds and TDSR.
               <Link href="/" className="ml-1 text-primary-600 hover:underline">Edit profile</Link>
             </div>
           </CardBody>
@@ -198,7 +202,7 @@ export default function PropertyDetailView({
             </thead>
             <tbody>
               {p.byUnitType.map((r) => (
-                <tr key={r.unitType} className="border-b border-default-100 last:border-0">
+                <tr key={r.unitType} className={`border-b border-default-100 last:border-0 ${r.unitType === type ? "bg-primary-50 font-semibold" : ""}`}>
                   <td className="font-medium">{r.unitType}</td>
                   <td className="text-right">{fmt(r.medianPrice)}</td>
                   <td className="text-right">{r.medianPsf ? `$${fmtN(r.medianPsf)}` : "—"}</td>
@@ -236,56 +240,68 @@ export default function PropertyDetailView({
 
 
       <section className="grid md:grid-cols-2 gap-4">
-        <ExpandableHistory title="Recent sales" total={p.recentTxns.length}>
-          {(limit) => (
-            <table className="w-full text-xs [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-1.5 tabular-nums">
-              <thead className="border-b border-default-200 text-left text-tiny text-default-500 uppercase tracking-wider">
-                <tr>
-                  <th>Date</th>
-                  <th className="text-right">Price</th>
-                  <th className="text-right">Sqft</th>
-                  <th className="text-right">PSF</th>
-                  <th className="text-right">Floor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.recentTxns.slice(0, limit).map((t, i) => (
-                  <tr key={i} className="border-b border-default-100 last:border-0">
-                    <td>{t.contractDate}</td>
-                    <td className="text-right">{fmt(t.price)}</td>
-                    <td className="text-right">{fmtN(t.sqft)}</td>
-                    <td className="text-right">${fmtN(t.psf)}</td>
-                    <td className="text-right">{t.floorRange ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </ExpandableHistory>
-        <ExpandableHistory title="Recent rentals" total={p.recentRentals.length}>
-          {(limit) => (
-            <table className="w-full text-xs [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-1.5 tabular-nums">
-              <thead className="border-b border-default-200 text-left text-tiny text-default-500 uppercase tracking-wider">
-                <tr>
-                  <th>Date</th>
-                  <th className="text-right">Rent</th>
-                  <th className="text-right">Sqft</th>
-                  <th className="text-right">BR</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.recentRentals.slice(0, limit).map((r, i) => (
-                  <tr key={i} className="border-b border-default-100 last:border-0">
-                    <td>{r.leaseDate}</td>
-                    <td className="text-right">{fmt(r.rent)}</td>
-                    <td className="text-right">{r.sqft ? fmtN(r.sqft) : "—"}</td>
-                    <td className="text-right">{r.bedrooms ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </ExpandableHistory>
+        {(() => {
+          const filteredTxns = type
+            ? p.recentTxns.filter((t) => t.sqft && unitTypeFromSqft(t.sqft) === type)
+            : p.recentTxns;
+          const filteredRentals = type
+            ? p.recentRentals.filter((r) => r.sqft && unitTypeFromSqft(r.sqft) === type)
+            : p.recentRentals;
+          return (
+            <>
+              <ExpandableHistory title={type ? `Recent sales (${type})` : "Recent sales"} total={filteredTxns.length}>
+                {(limit) => (
+                  <table className="w-full text-xs [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-1.5 tabular-nums">
+                    <thead className="border-b border-default-200 text-left text-tiny text-default-500 uppercase tracking-wider">
+                      <tr>
+                        <th>Date</th>
+                        <th className="text-right">Price</th>
+                        <th className="text-right">Sqft</th>
+                        <th className="text-right">PSF</th>
+                        <th className="text-right">Floor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTxns.slice(0, limit).map((t, i) => (
+                        <tr key={i} className="border-b border-default-100 last:border-0">
+                          <td>{t.contractDate}</td>
+                          <td className="text-right">{fmt(t.price)}</td>
+                          <td className="text-right">{fmtN(t.sqft)}</td>
+                          <td className="text-right">${fmtN(t.psf)}</td>
+                          <td className="text-right">{t.floorRange ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </ExpandableHistory>
+              <ExpandableHistory title={type ? `Recent rentals (${type})` : "Recent rentals"} total={filteredRentals.length}>
+                {(limit) => (
+                  <table className="w-full text-xs [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-1.5 tabular-nums">
+                    <thead className="border-b border-default-200 text-left text-tiny text-default-500 uppercase tracking-wider">
+                      <tr>
+                        <th>Date</th>
+                        <th className="text-right">Rent</th>
+                        <th className="text-right">Sqft</th>
+                        <th className="text-right">BR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredRentals.slice(0, limit).map((r, i) => (
+                        <tr key={i} className="border-b border-default-100 last:border-0">
+                          <td>{r.leaseDate}</td>
+                          <td className="text-right">{fmt(r.rent)}</td>
+                          <td className="text-right">{r.sqft ? fmtN(r.sqft) : "—"}</td>
+                          <td className="text-right">{r.bedrooms ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </ExpandableHistory>
+            </>
+          );
+        })()}
       </section>
     </main>
   );

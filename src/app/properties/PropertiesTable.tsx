@@ -5,6 +5,13 @@ import { motion } from "framer-motion";
 import { Card, Chip } from "@heroui/react";
 import { useNav } from "./NavContext";
 
+function caChipColor(score: number | null): "success" | "warning" | "danger" | "default" {
+  if (score == null) return "default";
+  if (score >= 55) return "success";
+  if (score >= 30) return "warning";
+  return "danger";
+}
+
 const fmt = (n: number) =>
   n.toLocaleString("en-SG", { style: "currency", currency: "SGD", maximumFractionDigits: 0 });
 
@@ -51,12 +58,6 @@ export type SortKey =
   | "turnoverPct"
   | "caScore";
 
-function caColor(score: number | null): string {
-  if (score == null) return "text-default-400";
-  if (score >= 65) return "text-success-700";
-  if (score >= 40) return "text-warning-700";
-  return "text-danger-600";
-}
 
 const segmentColor = (s: string | null): "primary" | "secondary" | "default" => {
   if (s === "CCR") return "primary";
@@ -171,14 +172,18 @@ export default function PropertiesTable({
                   {r.cashOnCashPct >= 0 ? "+" : ""}{r.cashOnCashPct.toFixed(1)}%
                 </td>
                 <td
-                  className={`px-2 py-3 text-right tabular-nums font-semibold ${caColor(r.caScore)}`}
+                  className="px-2 py-3 text-center"
                   title={
                     r.caScore != null
                       ? `Momentum ${r.momentumPctYr != null ? (r.momentumPctYr >= 0 ? "+" : "") + r.momentumPctYr.toFixed(1) + "%/yr" : "—"} · vs peers ${r.peerSpreadPct != null ? (r.peerSpreadPct >= 0 ? "+" : "") + r.peerSpreadPct.toFixed(1) + "%" : "—"}`
                       : "Not enough transactions to score"
                   }
                 >
-                  {r.caScore != null ? r.caScore.toFixed(0) : <span className="text-default-300">—</span>}
+                  {r.caScore != null ? (
+                    <Chip size="sm" variant="flat" color={caChipColor(r.caScore)} className="text-[11px] font-semibold tabular-nums">
+                      {r.caScore.toFixed(0)}
+                    </Chip>
+                  ) : <span className="text-default-300">—</span>}
                 </td>
                 <td
                   className="px-2 py-3 text-right tabular-nums text-tiny text-default-600"

@@ -169,15 +169,10 @@ export default async function PropertiesPage({ searchParams }: { searchParams: P
               <>Projects up to {fmt(maxPrice)}</>
             )}
           </h1>
-          <p className="text-sm text-gray-600">
-            {query
-              ? "Matches across all projects; out-of-budget results are greyed out."
-              : "Min 3 sale txns (last 24mo) + 3 rental records."}
-            <span className="ml-2 text-gray-400">· {totalRows} {totalRows === 1 ? "result" : "results"}</span>
-          </p>
           <p className="text-xs text-gray-500">
-            Cash ROI uses your saved profile: cash {fmt(profile.cash)}, CPF {fmt(profile.cpf)}, age {profile.age}, rate {profile.rate}%.
+            Cash ROI computed based: Cash: {fmt(profile.cash)}, CPF: {fmt(profile.cpf)}, Age: {profile.age}, Loan Rate: {profile.rate}%
             <Link href="/" className="ml-2 text-blue-600 hover:underline">Edit</Link>
+            <span className="ml-2 text-gray-400">· {totalRows} {totalRows === 1 ? "result" : "results"}</span>
           </p>
           </div>
         </div>

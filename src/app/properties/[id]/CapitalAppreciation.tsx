@@ -21,6 +21,14 @@ type Props = {
   viewLabel: string;
 };
 
+function shortTenure(t: string | null): string {
+  if (!t) return "—";
+  if (/freehold/i.test(t)) return "Freehold";
+  const m = t.match(/(\d+)\s*yrs?.*?(\d{4})?/i);
+  if (m) return m[2] ? `${m[1]}yr · ${m[2]}` : `${m[1]}yr`;
+  return t;
+}
+
 const PRIMARY = "#6366F1"; // indigo-500
 const PEER = "#9CA3AF"; // gray-400
 const BAND = "#6366F1";
@@ -44,8 +52,8 @@ function addQuarters(label: string, steps: number): string {
 
 function scoreBadgeColor(score: number | null): "success" | "warning" | "danger" | "default" {
   if (score == null) return "default";
-  if (score >= 65) return "success";
-  if (score >= 40) return "warning";
+  if (score >= 55) return "success";
+  if (score >= 30) return "warning";
   return "danger";
 }
 
@@ -155,15 +163,7 @@ export default function CapitalAppreciation({ ca, viewLabel }: Props) {
             direction={ca.momentumPctYr}
             tip="Recency-weighted slope of this project's quarterly median PSF over the last 5 years, annualised."
           />
-          <Tile
-            label="vs 1km peers"
-            sublabel="lease-adjusted"
-            value={pctFmt(ca.peerSpreadPct)}
-            direction={ca.peerSpreadPct == null ? null : -ca.peerSpreadPct}
-            tip={`FH-equivalent PSF of this project vs distance-weighted median of ${
-              ca.peerCount ?? 0
-            } private projects within ${ca.peerRadiusM ?? 0}m, each normalised by remaining lease (Bala's Table). Negative = cheaper than neighbours after tenure adjustment.`}
-          />
+          <PeerValueTile ca={ca} />
           <Tile
             label="Volume / yr"
             value={
@@ -289,10 +289,57 @@ export default function CapitalAppreciation({ ca, viewLabel }: Props) {
             {ca.peerCount ?? 0} projects within {ca.peerRadiusM ?? 0}m, distance-weighted.
           </div>
         </div>
+        {ca.peerProjects.filter((p) => p.currentPsf != null).length > 0 && (
+          <details className="group">
+            <summary className="text-xs font-medium text-default-600 cursor-pointer hover:text-foreground select-none">
+              Peer projects within {ca.peerRadiusM ?? 0}m ({ca.peerProjects.filter((p) => p.currentPsf != null).length})
+            </summary>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-xs [&_th]:px-2 [&_th]:py-1.5 [&_td]:px-2 [&_td]:py-1.5 tabular-nums">
+                <thead className="border-b border-default-200 text-left text-tiny uppercase tracking-wider text-default-500">
+                  <tr>
+                    <th>Project</th>
+                    <th>Tenure</th>
+                    <th className="text-right">Lease Remaining</th>
+                    <th className="text-right">PSF</th>
+                    <th className="text-right">Distance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ca.peerProjects.filter((p) => p.currentPsf != null).map((peer) => (
+                    <tr key={peer.id} className="border-b border-default-100 last:border-0">
+                      <td className="font-medium truncate max-w-[180px]" title={peer.name}>
+                        <a
+                          href={`/properties/${peer.id}`}
+                          className="text-primary-600 hover:underline"
+                        >
+                          {peer.name}
+                        </a>
+                      </td>
+                      <td className="text-default-600 truncate max-w-[120px]" title={peer.tenure ?? undefined}>
+                        {shortTenure(peer.tenure)}
+                      </td>
+                      <td className="text-right text-default-600">
+                        {peer.leaseYr != null
+                          ? peer.leaseYr >= 100
+                            ? "—"
+                            : `${peer.leaseYr} yr`
+                          : "—"}
+                      </td>
+                      <td className="text-right">{peer.currentPsf != null ? `$${peer.currentPsf}` : "—"}</td>
+                      <td className="text-right text-default-500">{peer.distanceM}m</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+
         <p className="text-tiny text-default-400 leading-relaxed">
           Continuation of the last 5-year PSF trend if conditions hold. Not a forecast; wider bands
-          mean the trend is noisier and less reliable. Peer comparison includes all private
-          residential within the radius — no tenure normalisation.
+          mean the trend is noisier and less reliable. Peer spread is lease-adjusted via
+          Bala&apos;s Table (FH-equivalent normalisation).
         </p>
       </CardBody>
     </Card>
@@ -312,6 +359,57 @@ function labelFor(dataKey: string): string {
     default:
       return dataKey;
   }
+}
+
+function PeerValueTile({ ca }: { ca: CaMetrics }) {
+  const hasFairValue = ca.fairValuePsf != null && ca.currentPsf != null;
+  const spread = ca.peerSpreadPct;
+  const isUndervalued = spread != null && spread < -2;
+  const isOvervalued = spread != null && spread > 2;
+  const label = isUndervalued ? "Undervalued" : isOvervalued ? "Overvalued" : "Fair value";
+  const color = isUndervalued
+    ? "text-success-700"
+    : isOvervalued
+    ? "text-danger-600"
+    : "text-default-700";
+
+  if (!hasFairValue) {
+    return (
+      <Tile
+        label="vs 1km peers"
+        value="—"
+        direction={null}
+        tip="Not enough peer data for this unit type within 1km."
+      />
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-default-200 p-3 bg-default-50/40">
+      <div className="flex items-center gap-1 text-tiny text-default-500 uppercase tracking-wide">
+        vs 1km peers
+        <span
+          title={`Fair value PSF estimated from ${ca.peerCount ?? 0} peers within ${ca.peerRadiusM ?? 0}m, lease-adjusted (Bala's Table). Peers weighted: 0–250m = 1.0, 250–500m = 0.5, 500m–1km = 0.2.`}
+          className="cursor-help text-default-400"
+        >
+          <Info className="w-3 h-3" />
+        </span>
+      </div>
+      <div className="mt-0.5 space-y-0.5">
+        <div className="flex items-baseline gap-1.5">
+          <span className={`font-semibold text-base tabular-nums ${color}`}>
+            {label}
+          </span>
+          <span className={`text-xs tabular-nums ${color}`}>
+            ({spread != null ? (spread >= 0 ? "+" : "") + spread.toFixed(1) + "%" : "—"})
+          </span>
+        </div>
+        <div className="text-[11px] text-default-500 tabular-nums">
+          Fair: {fmtPsf(ca.fairValuePsf)} · Current: {fmtPsf(ca.currentPsf)}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Tile({

@@ -93,6 +93,7 @@ export const projectMetrics = pgTable(
     caScore: numeric("ca_score", { precision: 5, scale: 1 }), // 0–100
     // forecast band (12 months ahead of the latest quarter)
     currentPsf: numeric("current_psf", { precision: 10, scale: 2 }),
+    fairValuePsf: numeric("fair_value_psf", { precision: 10, scale: 2 }),
     forecastLowPsf: numeric("forecast_low_psf", { precision: 10, scale: 2 }),
     forecastMidPsf: numeric("forecast_mid_psf", { precision: 10, scale: 2 }),
     forecastHighPsf: numeric("forecast_high_psf", { precision: 10, scale: 2 }),
@@ -101,6 +102,7 @@ export const projectMetrics = pgTable(
     peerSeries: jsonb("peer_series"), // [{q, psf, n_peers}]
     peerCount: integer("peer_count"),
     peerRadiusM: integer("peer_radius_m"),
+    peerProjects: jsonb("peer_projects"), // [{id, name, tenure, leaseYr, distanceM, currentPsf}]
     sampleSize: integer("sample_size"),
     // lease context — same for every unit_type of a given project; duplicated for query ergonomics
     leaseYearsRemaining: integer("lease_years_remaining"),

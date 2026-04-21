@@ -69,6 +69,30 @@ export function leaseDecayPctYr(yearsRemaining: number | null): number {
   return ((vNext - vNow) / vNow) * 100; // negative
 }
 
+// Lease runway score (0–100) reflecting real-world financing cliffs.
+// Unlike Bala's smooth theoretical curve, this captures the demand-side
+// reality: CPF restrictions at ~60yr, bank financing collapse at ~40yr,
+// cash-only market below ~30yr.
+//
+//   100  FH / 999yr / 75+ yr remaining  — full financing, full CPF
+//    95  70–74 yr remaining             — minor CPF pro-rating starts
+//    85  60–69 yr remaining             — CPF restrictions bite, buyer pool shrinks
+//    60  50–59 yr remaining             — significant financing headwinds
+//    35  40–49 yr remaining             — approaching severe cliff
+//    15  30–39 yr remaining             — most banks won't lend to most ages
+//     5  20–29 yr remaining             — effectively cash-only
+//     0  <20 yr remaining               — near-zero appreciation potential
+export function leaseRunwayScore(yearsRemaining: number | null): number {
+  if (yearsRemaining == null || yearsRemaining >= 75) return 100;
+  if (yearsRemaining >= 70) return 95;
+  if (yearsRemaining >= 60) return 85 - (69 - yearsRemaining) * 2.5; // 85 → 60
+  if (yearsRemaining >= 50) return 60 - (59 - yearsRemaining) * 2.5; // 60 → 35
+  if (yearsRemaining >= 40) return 35 - (49 - yearsRemaining) * 2.0; // 35 → 15
+  if (yearsRemaining >= 30) return 15 - (39 - yearsRemaining) * 1.0; // 15 → 5
+  if (yearsRemaining >= 20) return 5;
+  return 0;
+}
+
 // Extract lease length + start year from a URA tenure text + metadata.
 // URA returns strings like:
 //   "Freehold"
