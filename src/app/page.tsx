@@ -16,12 +16,14 @@ import {
 } from "@heroui/react";
 import { Buildings, Wallet } from "@phosphor-icons/react/dist/ssr";
 import { useRouter } from "next/navigation";
+import OnboardingSplash, { useOnboardingSeen } from "@/components/OnboardingSplash";
 
 const fmt = (n: number) =>
   n.toLocaleString("en-SG", { style: "currency", currency: "SGD", maximumFractionDigits: 0 });
 
 export default function Home() {
   const router = useRouter();
+  const [onboardingSeen, markOnboardingSeen] = useOnboardingSeen();
   const [cash, setCash] = useState(DEFAULT_PROFILE.cash);
   const [cpf, setCpf] = useState(DEFAULT_PROFILE.cpf);
   const [age, setAge] = useState(DEFAULT_PROFILE.age);
@@ -110,6 +112,8 @@ export default function Home() {
     router.push(`/properties?max=${Math.round(result.maxPrice)}`);
 
   return (
+    <>
+    {!onboardingSeen && <OnboardingSplash onDone={markOnboardingSeen} />}
     <main className="max-w-3xl mx-auto p-4 sm:p-6 lg:p-8 space-y-5">
       <div className="space-y-2">
         <div className="inline-flex items-center gap-2 text-tiny text-primary-600 uppercase tracking-wider font-semibold">
@@ -317,6 +321,7 @@ export default function Home() {
         </p>
       </div>
     </main>
+    </>
   );
 }
 
